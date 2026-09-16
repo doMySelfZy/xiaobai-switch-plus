@@ -8,11 +8,14 @@
 
 统一属性：`centered`、`destroyOnHidden`、`mask`、宽度 520–560。
 
+`mask` 只开 `enabled`，**不要开 `blur`**：antd 会因此挂上 `.ant-modal-mask-blur`（整窗
+`backdrop-filter: blur(4px)`），在 175% 缩放下是一次全视口模糊，收益不抵开销（2026-09-16 性能任务移除）。
+
 ```tsx
 <Modal
   centered
   destroyOnHidden
-  mask={{ enabled: true, blur: true }}
+  mask={{ enabled: true }}
   width={560}
   open={open}
   title={...}

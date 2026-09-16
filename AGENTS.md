@@ -135,7 +135,6 @@
   modal={{
     centered: true,
     styles: {
-      mask: { backdropFilter: "blur(4px)" },
       container: {
         maxHeight: "calc(100vh - 32px)",
         display: "flex",
@@ -164,7 +163,7 @@
 |------|--------|
 | `centered` | `true`（或依赖 ConfigProvider） |
 | `destroyOnHidden` | `true`（antd 5.23+ / 6.x；优先于已弃用的 `destroyOnClose`） |
-| `mask` | `{ enabled: true, blur: true }`（在支持时） |
+| `mask` | `{ enabled: true }` —— **不要开 `blur`**：antd 会因此挂上 `.ant-modal-mask-blur`（整窗 `backdrop-filter: blur(4px)`），在 175% 缩放下是一次全视口模糊，收益不抵开销（2026-09-16 性能任务移除；悬浮窗透明层上的同类模糊同理已删） |
 | `width` | 表单优先 `520`–`560` |
 | 高度 | 容器 `maxHeight: calc(100vh - 32px)`；标题 / 底栏固定，body 内部滚动 |
 
@@ -173,7 +172,7 @@
   open={open}
   centered
   destroyOnHidden
-  mask={{ enabled: true, blur: true }}
+  mask={{ enabled: true }}
   width={560}
   onCancel={onClose}
   onOk={handleOk}

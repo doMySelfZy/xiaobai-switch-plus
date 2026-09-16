@@ -1,0 +1,4 @@
+{"file": "AGENTS.md", "reason": "复核门：兼容红线是否被触碰（命名空间/协议名/备份前缀/更新公钥/深链 scheme）、i18n 是否双语齐全、antd 静态调用是否被引入、测试是否按要求跑完"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "复核批次 E2/E3：同步四不变量（指纹算法版本、防静默覆盖、下载落地再记账、启动恢复协议）与 manifest 契约是否仍然成立"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "复核批次 A/B/C：每个定时器/监听是否有清理、依赖函数是否 useCallback、拖动路径是否真的不再有逐帧重活"}
+{"file": ".trellis/spec/guides/index.md", "reason": "复核误报率提示：对每条 CRITICAL/WARNING 必须落到代码验证；重点排查「信任边界误判」「把注释里写明的有意设计当 bug」「变量误读」三类误报"}

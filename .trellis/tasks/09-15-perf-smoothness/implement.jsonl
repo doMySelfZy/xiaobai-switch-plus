@@ -1,0 +1,7 @@
+{"file": "AGENTS.md", "reason": "唯一权威源：兼容红线（xiaobai_ 命名空间、manifest 名、备份前缀与包内条目名）、UI Shell 约定、antd ConfigProvider/Modal 约定、i18n 规则、测试要求——本任务全批次都要满足"}
+{"file": ".trellis/spec/frontend/hook-guidelines.md", "reason": "批次 A/B/C 的核心：effect 可清理、依赖函数 useCallback、纯函数放组件外；文件里已明确写有「拖拽这类高频交互不要在 mousemove 里做重活」，A1 正是它的延伸"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "批次 B4 细粒度订阅、D2 保留旧列表、D5 乐观更新都改在 zustand store 与后端调用边界上，需遵守既有 store/hook 拆分"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "批次 A4（Modal 的 mask/遮罩配置）与 A6（组件 memo 与列表渲染）涉及组件与弹窗书写规范"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "批次 E2/E3 直接改同步与备份的锁范围与超时，必须先读四条不变量与 manifest 契约，避免破坏防静默覆盖与启动恢复协议"}
+{"file": ".trellis/spec/guides/index.md", "reason": "复核规则：AI 复核结论约 35% 误报，每条改动前必须落到代码上验证根因；同时给出跨层/复用思考清单"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "批次 D1/D2 要并行化既有的 attempt_models 调用链而非另写一套请求逻辑；批次 E1 要复用 list_target_status 已有的 spawn_blocking 形状"}
