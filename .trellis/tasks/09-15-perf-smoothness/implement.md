@@ -78,10 +78,32 @@ cd /e/xiaobai-switch && pnpm typecheck && pnpm test:run
 
 ## 进度记录
 
-- [ ] 批次 A
-- [ ] 批次 B
-- [ ] 批次 C
-- [ ] 批次 D
-- [ ] 批次 E
-- [ ] 复核
-- [ ] 构建安装 + 真机确认
+- [x] 批次 A — 提交 `e6c0ebe`（另外 6 个弹窗的遮罩去 blur 在 `1a2cb7e`）
+- [x] 批次 B — 提交 `4183385`
+- [x] 批次 C — 提交 `d2397fc`
+- [x] 批次 D — 提交 `88a29f3`
+- [x] 批次 E — 提交 `f143619`
+- [x] 任务文档与规范 — 提交 `f03fad9`
+- [x] 复核（trellis-check，独立跑通全部测试并逐条核对验收标准；红线零触碰）
+- [x] 构建安装：`XiaoBaiSwitch Plus_0.1.5_x64-setup.exe` 装到 `D:\Program Files\XiaoBaiSwitch Plus`（0.1.5，含签名）
+- [ ] **真机人工确认**（需要人）：悬浮窗拖动跟手（前提：设置里开启悬浮窗——本机当前未开启，枚举窗口确认该窗口根本没创建）、设置页数字输入手感、去模糊后的观感、整体流畅度
+- [x] 机器可验的部分已完成：界面渲染正常（UIA 读到 80 个元素、站点与余额齐全）；**标题栏双击最大化/还原经 SendInput 实测可用**（复核者标为 Important 的那条风险不成立）
+
+## 测试基线（本次结束后）
+
+- `cargo test`：554 passed / 0 failed / 2 ignored（基线 542 + 本次新增 12 条）
+- `pnpm test:run`：407 passed / 0 failed；2 个文件仍是本机既有的收集期 SyntaxError
+- `pnpm typecheck`：0 错误
+
+## 复核提出但未处理（留给后续）
+
+1. `TitleBar.tsx` 拖动已按 Tauri 官方形状实现，但"双击是否被拖动吞掉"已由本次真机测试证明没问题；保留现状。
+2. `FloatingWindow.tsx`：若某平台系统拖动完全不发 mouseup，抑制标志会吞掉下一次正常点击（只在非 Windows 可能触发）。
+3. `src-tauri/src/tray.rs:657` 托盘触发的 apply 仍在主线程（不在本批次文件范围内），应改为 `spawn_blocking`。
+4. `macos_scheme.rs` 新增的 `polling_is_only_required...` 测试是恒真断言（函数体就是 `cfg!`），护栏价值低。
+5. D1 的"取消"只是前端停止等待，后端请求仍会跑完（已在 UI 文案与注释里如实说明）。
+6. macOS 专属分支（深链轮询、AppleScript）本机无法验证。
+
+## 版本号提醒
+
+本次仍是 0.1.5（与今天早些时候装的那版同号但内容不同）。若要对外发布这些性能改动，需先 bump 到 0.1.6。
