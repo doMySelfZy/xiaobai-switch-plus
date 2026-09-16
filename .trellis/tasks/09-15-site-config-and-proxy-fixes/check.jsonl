@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "复核门：确认 FINGERPRINT_TABLES 与 FINGERPRINT_ALGORITHM_VERSION 未被改动、新增的 local_proxy_headers / mcp_update_state 未进入清单、且新表的指纹不变性回归测试真的存在"}
+{"file": ".trellis/spec/backend/index.md", "reason": "复核 schema 迁移：每张新表都挂进了 ensure_incremental_schema 的所有“库已存在”分支；新增命令已注册且签名有类型"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 Rust ↔ TS 契约：新增/改签名的命令在 domain/mod.rs、types/domain.ts、browserMock.ts、i18n 四处一致，无遗漏字段"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复核是否误加平行实现：请求头是否复用了既有加解密与两层校验，MCP 解析是否复用了既有口径而非另写一套"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "复核门：禁止模式（antd 静态调用、硬编码文案）、必需模式与测试要求是否满足"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "复核 S2/S3/S4 的界面改动是否遵守 Modal/SettingsGroup/Form 约定与主题 token，未引入硬编码 hex 或自造校验 UI"}

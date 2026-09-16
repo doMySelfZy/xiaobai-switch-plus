@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "本任务最关键的约束来源：指纹算法版本与 FINGERPRINT_TABLES 的不变量。S3/S5 新增表必须不被加入清单，S6 会改 sync.rs 注释，动手前需按此文档核对"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端约定入口：命令注册、schema 迁移（ensure_incremental_schema 的每个分支）、加密存储与备份要求的索引"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "S1/S3/S4/S5 都会新增或改签名（proxy 命令、全局请求头读写、协议自动检测、MCP 版本状态），Rust 侧结构变化必须与 TS 类型、browserMock、i18n 逐字段对齐"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免另写平行实现：请求头必须复用 repo/site.rs 的加解密与 validate_proxy_headers 口径，前端复用 ProxyHeaderEditor/parseProxyHeadersJson，MCP 解析复用 adapters/mcp_version.rs 的既有口径"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "S2/S3/S4 都是站点表单与代理页的布局重排，需遵守 Modal、SettingsGroup、Form.Item 等既有组件约定与 token 用法"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "S2/S4 会改 proxyStore 与 siteStore 的读写路径（启停状态、协议回填），需遵守 store 的既有约定"}
