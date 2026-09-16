@@ -2,6 +2,23 @@ import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 import type { AgentUpdateStatus, BatchUpdateResult } from '@/types/agentUpdate';
 
+/**
+ * 版本检查结果的缓存时长。
+ *
+ * 每次检查都要为每个 agent 起 npm 子进程再查 registry，而 `ApplyPage` 每次进页面
+ * 都会调 `checkUpdates()`：没有这个窗口就是「点一下页面 = 一轮 npm」。窗口内直接复用
+ * 上次结果，需要绕过时传 `{ force: true }`（手动刷新）。
+ */
+export const UPDATE_CHECK_TTL_MS = 30 * 60 * 1000;
+
+export interface UpdateCheckOptions {
+  /** 跳过新鲜度检查，强制重新检查。 */
+  force?: boolean;
+}
+
+/** 在途去重：并发调用共用同一次检查，不再重复起子进程。 */
+let inFlightCheck: Promise<void> | null = null;
+
 interface AgentUpdateStore {
   updateStatuses: Record<string, AgentUpdateStatus>;
   checking: boolean;
@@ -16,7 +33,7 @@ interface AgentUpdateStore {
   isUpdating: (kind: string) => boolean;
 
   // Actions
-  checkUpdates: () => Promise<void>;
+  checkUpdates: (options?: UpdateCheckOptions) => Promise<void>;
   updateAgent: (kind: string) => Promise<string | undefined>;
   batchUpdate: (kinds: string[]) => Promise<BatchUpdateResult>;
   updateAll: () => Promise<BatchUpdateResult>;
@@ -50,18 +67,32 @@ export const useAgentUpdateStore = create<AgentUpdateStore>((set, get) => ({
     return get().updating;
   },
 
-  checkUpdates: async () => {
+  checkUpdates: async (options?: UpdateCheckOptions) => {
+    if (inFlightCheck) return inFlightCheck;
+
+    const lastCheckTime = get().lastCheckTime;
+    const fresh =
+      lastCheckTime !== null && Date.now() - lastCheckTime < UPDATE_CHECK_TTL_MS;
+    if (fresh && !options?.force) return;
+
     set({ checking: true });
+    const run = (async () => {
+      try {
+        const statuses = await invoke<AgentUpdateStatus[]>('check_agent_updates');
+        const statusMap: Record<string, AgentUpdateStatus> = {};
+        statuses.forEach((status) => {
+          statusMap[status.kind] = status;
+        });
+        set({ updateStatuses: statusMap, lastCheckTime: Date.now() });
+      } catch (error) {
+        console.error('Failed to check agent updates:', error);
+      }
+    })();
+    inFlightCheck = run;
     try {
-      const statuses = await invoke<AgentUpdateStatus[]>('check_agent_updates');
-      const statusMap: Record<string, AgentUpdateStatus> = {};
-      statuses.forEach((status) => {
-        statusMap[status.kind] = status;
-      });
-      set({ updateStatuses: statusMap, lastCheckTime: Date.now() });
-    } catch (error) {
-      console.error('Failed to check agent updates:', error);
+      await run;
     } finally {
+      if (inFlightCheck === run) inFlightCheck = null;
       set({ checking: false });
     }
   },

@@ -1,11 +1,19 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntdApp, ConfigProvider } from "antd";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSiteStore } from "@/stores";
-import type { Site } from "@/types/domain";
+import type { ProtocolDetectionResult, Site } from "@/types/domain";
 import { SiteFormModal } from "./SiteFormModal";
 import "@/i18n";
+
+// 连接测试没有 browser mock，必须在 invoke 这一层控制时序（进度 / 取消 / 迟到结果）。
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+
+vi.mock("@/lib/invoke", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/invoke")>();
+  return { ...actual, invoke: invokeMock };
+});
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
@@ -13,6 +21,31 @@ function Wrapper({ children }: { children: ReactNode }) {
       <AntdApp>{children}</AntdApp>
     </ConfigProvider>
   );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+/** 表单打开时只会读这两个次要命令，其余命令直接失败，避免测试静默通过。 */
+function defaultInvokeImpl(cmd: string): Promise<unknown> {
+  if (cmd === "get_site_proxy_headers") return Promise.resolve([]);
+  if (cmd === "get_site_newapi_token") return Promise.resolve("");
+  return Promise.reject({ code: "internal", message: `unexpected command: ${cmd}` });
+}
+
+/** 展开高级配置、填好必填项并点「测试连接」。 */
+function startProtocolTest() {
+  fireEvent.click(screen.getByText("高级配置"));
+  fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {
+    target: { value: "https://api.example.com" },
+  });
+  fireEvent.change(screen.getByPlaceholderText("sk-..."), { target: { value: "sk-one" } });
+  fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
 }
 
 function sampleSite(): Site {
@@ -59,6 +92,8 @@ describe("SiteFormModal base url list", () => {
     useSiteStore.setState({
       getSiteApiKey: vi.fn(() => new Promise<string>(() => undefined)),
     });
+    invokeMock.mockReset();
+    invokeMock.mockImplementation((cmd: string) => defaultInvokeImpl(cmd));
   });
 
   afterEach(() => {
@@ -375,5 +410,129 @@ describe("SiteFormModal base url list", () => {
     const inputs = screen.getAllByPlaceholderText("https://api.example.com");
     expect(inputs[0]).toHaveValue("https://a.example.com");
     expect(inputs[1]).toHaveValue("https://b.example.com");
+  });
+
+  it("shows staged progress during detection and drops the result after 取消等待", async () => {
+    const pending = deferred<ProtocolDetectionResult>();
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "test_site_connection" ? pending.promise : defaultInvokeImpl(cmd),
+    );
+
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    startProtocolTest();
+
+    expect(await screen.findByText("正在尝试 OpenAI / Anthropic 鉴权组合…")).toBeInTheDocument();
+    expect(screen.getByText(/已等待 \d+ 秒/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "取消等待" }));
+    expect(await screen.findByText("已停止等待（检测仍在后台完成）")).toBeInTheDocument();
+    // 取消入口与进度都撤销（主按钮的 loading 图标在 jsdom 里停在退场动画上，不断言它）。
+    expect(screen.queryByRole("button", { name: "取消等待" })).toBeNull();
+    expect(screen.queryByText("正在尝试 OpenAI / Anthropic 鉴权组合…")).toBeNull();
+    expect(screen.queryByText(/已等待/)).toBeNull();
+
+    // 后端命令没有取消通道，仍会跑完：迟到的结果不得回填表单，也不该弹成功提示。
+    await act(async () => {
+      pending.resolve({
+        detectedProtocol: "anthropic",
+        modelPreview: [],
+        endpoint: "https://api.example.com/v1/models",
+      });
+      await pending.promise;
+    });
+    expect(screen.getByText("已停止等待（检测仍在后台完成）")).toBeInTheDocument();
+    expect(screen.queryByText(/检测到/)).toBeNull();
+  });
+
+  it("tells an auth rejection apart from an unreachable site", async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "test_site_connection"
+        ? Promise.reject({ code: "unauthorized", message: "unauthorized" })
+        : defaultInvokeImpl(cmd),
+    );
+
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    startProtocolTest();
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      await within(dialog).findByText("认证被拒绝：请检查 API Key 是否与该站点匹配"),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a timeout as unreachable instead of as bad credentials", async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "test_site_connection"
+        ? Promise.reject({ code: "timeout", message: "request timed out" })
+        : defaultInvokeImpl(cmd),
+    );
+
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    startProtocolTest();
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      await within(dialog).findByText("无法连接站点：网络错误或请求超时"),
+    ).toBeInTheDocument();
+  });
+
+  it("classifies an aggregated detection failure carrying HTTP 401 as an auth rejection", async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "test_site_connection"
+        ? Promise.reject({
+            code: "protocol_detection_failed",
+            message: "HTTP 401 from https://api.example.com/v1/models",
+          })
+        : defaultInvokeImpl(cmd),
+    );
+
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    startProtocolTest();
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      await within(dialog).findByText("认证被拒绝：请检查 API Key 是否与该站点匹配"),
+    ).toBeInTheDocument();
+  });
+
+  it("falls back to the technical detail for an unclassified failure", async () => {
+    invokeMock.mockImplementation((cmd: string) =>
+      cmd === "test_site_connection"
+        ? Promise.reject({
+            code: "protocol_detection_failed",
+            message: "Could not detect protocol. Both OpenAI and Anthropic endpoints failed.",
+          })
+        : defaultInvokeImpl(cmd),
+    );
+
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    startProtocolTest();
+
+    const dialog = screen.getByRole("dialog");
+    expect(
+      await within(dialog).findByText(
+        /连接测试失败：Could not detect protocol/,
+      ),
+    ).toBeInTheDocument();
   });
 });

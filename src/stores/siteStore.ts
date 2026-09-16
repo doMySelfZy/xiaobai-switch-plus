@@ -38,8 +38,15 @@ interface SiteState {
   loading: boolean;
   /** True after at least one successful sites load. */
   hydrated: boolean;
+  /** True while any site is fetching models (aggregate; prefer the per-site maps). */
   fetchingModels: boolean;
   fetchingModelsByKey: Record<string, boolean>;
+  /**
+   * Per-site "models are being refreshed" flag (covers both `fetchModels` and
+   * `switchApiKey`). The previous list is intentionally kept in `modelsBySite`
+   * while this is true — see the comment in `switchApiKey`.
+   */
+  fetchingModelsBySite: Record<string, boolean>;
   error: string | null;
   loadSites: (opts?: { force?: boolean; soft?: boolean }) => Promise<void>;
   getSiteApiKey: (id: string, apiKeyId?: string) => Promise<string>;
@@ -75,6 +82,20 @@ function withoutSite<T>(record: Record<string, T>, siteId: string): Record<strin
   return next;
 }
 
+/**
+ * `${siteId}:${apiKeyId}` 形式的在途标记 → per-site 视图。
+ * 站点 id 是 UUID（不含冒号），所以前缀切分是可靠的。
+ */
+function sitesWithInFlightFetch(loading: Record<string, boolean>): Record<string, boolean> {
+  const bySite: Record<string, boolean> = {};
+  for (const [key, busy] of Object.entries(loading)) {
+    if (!busy) continue;
+    const sep = key.indexOf(":");
+    if (sep > 0) bySite[key.slice(0, sep)] = true;
+  }
+  return bySite;
+}
+
 function clearSiteQuotaState(state: SiteState, siteId: string) {
   for (const key of quotaInflight.keys()) {
     if (key.startsWith(`${siteId}:`)) quotaInflight.delete(key);
@@ -101,6 +122,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
   hydrated: false,
   fetchingModels: false,
   fetchingModelsByKey: {},
+  fetchingModelsBySite: {},
   error: null,
   loadSites: async (opts) => {
     const hasCache = get().hydrated;
@@ -198,10 +220,14 @@ export const useSiteStore = create<SiteState>((set, get) => ({
           apiKeys: (prev.apiKeys ?? []).map((key) => ({ ...key, isActive: key.id === apiKeyId })),
         }
       : null;
+    const inFlightKeys = { ...get().fetchingModelsByKey, [fetchKey]: true };
     set({
       fetchingModels: true,
-      fetchingModelsByKey: { ...get().fetchingModelsByKey, [fetchKey]: true },
-      modelsBySite: { ...get().modelsBySite, [siteId]: [] },
+      fetchingModelsByKey: inFlightKeys,
+      fetchingModelsBySite: sitesWithInFlightFetch(inFlightKeys),
+      // 刻意不清空 modelsBySite[siteId]：新密钥的模型要等后端拉完才回来，清空会让
+      // 详情面板退回骨架屏（SitesPage 用「有没有缓存条目」判断），用户会盯着空白等
+      // 几十秒。刷新状态由 fetchingModelsBySite 表达，旧列表继续显示到新列表落地。
       ...(optimistic
         ? { sites: get().sites.map((s) => (s.id === siteId ? optimistic : s)) }
         : {}),
@@ -230,6 +256,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       delete loading[fetchKey];
       set({
         fetchingModelsByKey: loading,
+        fetchingModelsBySite: sitesWithInFlightFetch(loading),
         fetchingModels: Object.values(loading).some(Boolean),
       });
     }
@@ -295,9 +322,12 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     const site = get().sites.find((s) => s.id === siteId);
     const apiKeyId = activeApiKeyId(site ?? null);
     const fetchKey = `${siteId}:${apiKeyId ?? "active"}`;
+    const inFlightKeys = { ...get().fetchingModelsByKey, [fetchKey]: true };
     set({
       fetchingModels: true,
-      fetchingModelsByKey: { ...get().fetchingModelsByKey, [fetchKey]: true },
+      fetchingModelsByKey: inFlightKeys,
+      // 同 switchApiKey：刷新期间保留旧列表，per-site 标记表达「正在刷新」。
+      fetchingModelsBySite: sitesWithInFlightFetch(inFlightKeys),
       error: null,
     });
     try {
@@ -346,6 +376,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       delete loading[fetchKey];
       set({
         fetchingModelsByKey: loading,
+        fetchingModelsBySite: sitesWithInFlightFetch(loading),
         fetchingModels: Object.values(loading).some(Boolean),
       });
     }

@@ -10,6 +10,22 @@ export interface McpUpdateStatus {
   lastCheckAt: number | null;
 }
 
+/**
+ * 版本检查结果的缓存时长。与 `agentUpdateStore` 同口径：`McpPage` 每次进页面都会调
+ * `checkUpdates()`，每次都要为每个服务器起 `npm list` 子进程再查 registry，
+ * 没有这个窗口就是「点一下页面 = 一轮 npm」。窗口内直接复用上次结果；
+ * 手动刷新按钮走 `{ force: true }` 绕过窗口。
+ */
+export const MCP_UPDATE_CHECK_TTL_MS = 30 * 60 * 1000;
+
+export interface McpUpdateCheckOptions {
+  /** 跳过新鲜度检查，强制重新检查（手动刷新按钮）。 */
+  force?: boolean;
+}
+
+/** 在途去重：并发调用共用同一次检查，不再重复起子进程。 */
+let inFlightCheck: Promise<void> | null = null;
+
 export interface McpUpdateState {
   updateStatuses: McpUpdateStatus[];
   checking: boolean;
@@ -24,7 +40,7 @@ export interface McpUpdateState {
   isUpdating: (id: string) => boolean;
 
   // Actions
-  checkUpdates: () => Promise<void>;
+  checkUpdates: (options?: McpUpdateCheckOptions) => Promise<void>;
   updateServer: (id: string) => Promise<string | undefined>;
   batchUpdate: (ids: string[]) => Promise<{ successes: string[]; failures: Array<[string, string]> }>;
   updateAll: () => Promise<{ successes: string[]; failures: Array<[string, string]> }>;
@@ -60,17 +76,29 @@ export const useMcpUpdateStore = create<McpUpdateState>((set, get) => ({
   },
 
   // Actions
-  checkUpdates: async () => {
-    if (get().checking) return;
+  checkUpdates: async (options?: McpUpdateCheckOptions) => {
+    // 在途去重先于 TTL：并发进来的调用（例如页面挂载 + 手动刷新）共用同一次检查，
+    // 改前是「在跑就直接 return」，调用方拿不到结果却以为检查过了。
+    if (inFlightCheck) return inFlightCheck;
+
+    const lastCheckTime = get().lastCheckTime;
+    const fresh =
+      lastCheckTime !== null && Date.now() - lastCheckTime < MCP_UPDATE_CHECK_TTL_MS;
+    if (fresh && !options?.force) return;
 
     set({ checking: true });
-    try {
+    const run = (async () => {
       const statuses = await invoke<McpUpdateStatus[]>('check_mcp_updates');
       set({ updateStatuses: statuses, lastCheckTime: Date.now() });
+    })();
+    inFlightCheck = run;
+    try {
+      await run;
     } catch (error) {
       console.error('Failed to check MCP updates:', error);
       throw error;
     } finally {
+      if (inFlightCheck === run) inFlightCheck = null;
       set({ checking: false });
     }
   },

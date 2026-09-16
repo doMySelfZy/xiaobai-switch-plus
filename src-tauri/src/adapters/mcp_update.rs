@@ -2,6 +2,76 @@
 
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
+
+/// npm registry 查询的超时。改前 `reqwest::Client::new()` 没有任何超时：
+/// registry 一旦不响应，这次检查会永久挂起（UI 上表现为一直转圈）。
+const NPM_REGISTRY_TIMEOUT: Duration = Duration::from_secs(15);
+const NPM_REGISTRY_CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// `npm list` / `npm install` 的超时；超时后子进程会被结束，不留孤儿。
+const NPM_QUERY_TIMEOUT: Duration = Duration::from_secs(20);
+const NPM_INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// registry 客户端：显式设置超时，并带上应用自己的 user agent。
+/// 走 `reqwest` 的默认代理解析（env 代理），与改前行为一致。
+fn registry_client() -> AppResult<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(NPM_REGISTRY_TIMEOUT)
+        .connect_timeout(NPM_REGISTRY_CONNECT_TIMEOUT)
+        .user_agent(crate::http_client::default_user_agent())
+        .build()
+        .map_err(|e| AppError::new("mcp_update", format!("创建 HTTP 客户端失败: {}", e)))
+}
+
+/// 跑一次 npm，带超时；超时后用 `taskkill /T` 收掉整棵进程树（Windows 上
+/// npm.cmd 是 cmd.exe 包着 node.exe）。
+async fn run_npm(args: &[&str], timeout: Duration) -> AppResult<std::process::Output> {
+    let mut command = tokio::process::Command::new("npm");
+    command.args(args).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let label = args.join(" ");
+    let child = command
+        .spawn()
+        .map_err(|e| AppError::new("mcp_update", format!("无法执行 npm {label}: {e}")))?;
+    let pid = child.id();
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(output) => output
+            .map_err(|e| AppError::new("mcp_update", format!("执行 npm {label} 失败: {e}"))),
+        Err(_) => {
+            terminate_process_tree(pid);
+            Err(AppError::new(
+                "mcp_update",
+                format!("npm {label} 超时（{}s）", timeout.as_secs()),
+            ))
+        }
+    }
+}
+
+fn terminate_process_tree(pid: Option<u32>) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let Some(pid) = pid else {
+            return;
+        };
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpdateCheckResult {
@@ -34,11 +104,11 @@ pub async fn check_npm_package_version(package_name: &str) -> AppResult<UpdateCh
 /// 获取本地已安装的 npm 包版本
 async fn get_installed_npm_version(package_name: &str) -> AppResult<Option<String>> {
     // 使用 npm list 命令检查本地版本
-    let output = tokio::process::Command::new("npm")
-        .args(["list", package_name, "--global", "--json", "--depth=0"])
-        .output()
-        .await
-        .map_err(|e| AppError::new("mcp_update", format!("无法执行 npm 命令: {}", e)))?;
+    let output = run_npm(
+        &["list", package_name, "--global", "--json", "--depth=0"],
+        NPM_QUERY_TIMEOUT,
+    )
+    .await?;
 
     if !output.status.success() {
         // 可能是包未安装
@@ -64,8 +134,7 @@ async fn get_installed_npm_version(package_name: &str) -> AppResult<Option<Strin
 async fn get_latest_npm_version(package_name: &str) -> AppResult<Option<String>> {
     let registry_url = format!("https://registry.npmjs.org/{}", package_name);
 
-    let client = reqwest::Client::new();
-    let response = client
+    let response = registry_client()?
         .get(&registry_url)
         .send()
         .await
@@ -92,11 +161,7 @@ async fn get_latest_npm_version(package_name: &str) -> AppResult<Option<String>>
 
 /// 更新 npm 包到最新版本
 pub async fn update_npm_package(package_name: &str) -> AppResult<String> {
-    let output = tokio::process::Command::new("npm")
-        .args(["install", "-g", package_name])
-        .output()
-        .await
-        .map_err(|e| AppError::new("mcp_update", format!("执行 npm install 失败: {}", e)))?;
+    let output = run_npm(&["install", "-g", package_name], NPM_INSTALL_TIMEOUT).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

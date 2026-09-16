@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { App, Button, Collapse, Divider, Form, Input, Modal, Select, Typography } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { App, Button, Collapse, Divider, Form, Input, Modal, Select, Typography, theme } from "antd";
+import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { NewApiAccessProbe, ProtocolDetectionResult, Site, SiteCapabilities, SiteProtocol } from "@/types/domain";
 import { invoke, isAppError } from "@/lib/invoke";
@@ -31,6 +32,69 @@ const { Text } = Typography;
 
 function shouldOpenAdvanced(protocol?: SiteProtocol | null, notes?: string | null) {
   return protocol === "anthropic" || Boolean(notes?.trim());
+}
+
+/**
+ * 连接测试失败的语义分类。后端可能用错误码（`unauthorized` / `network` / `timeout`…）
+ * 或聚合错误码表达；分类只影响文案，不改行为。
+ */
+type ProtocolTestFailureKind = "unauthorized" | "unreachable" | "endpoint" | "unknown";
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  const message = (error as { message?: string } | null)?.message;
+  return message ?? String(error);
+}
+
+/**
+ * 「认证被拒」和「连不上 / 超时」要分开：前者让用户换 Key，后者让用户查地址与网络。
+ * 只有前者才值得去换鉴权方式。后端若把多次尝试聚合成一个错误码，就退回错误文案里
+ * 的 HTTP 401/403 判断（与 ModelPicker 对 HTTP 状态的处理同一口径）。
+ */
+function protocolTestFailureKind(error: unknown): ProtocolTestFailureKind {
+  const code = isAppError(error) ? error.code : "";
+  if (code === "unauthorized") return "unauthorized";
+  if (code === "network" || code === "timeout" || code === "ssl") return "unreachable";
+  if (code === "not_found" || code === "invalid_response") return "endpoint";
+  const text = errorText(error);
+  if (/\b40[13]\b/.test(text) || /unauthorized/i.test(text)) return "unauthorized";
+  if (/timeout|timed out/i.test(text)) return "unreachable";
+  return "unknown";
+}
+
+const PROTOCOL_TEST_FAILURE_KEYS: Record<ProtocolTestFailureKind, string> = {
+  unauthorized: "sites.protocolTestUnauthorized",
+  unreachable: "sites.protocolTestUnreachable",
+  endpoint: "sites.protocolTestEndpointUnrecognized",
+  unknown: "sites.protocolTestFailedDetail",
+};
+
+/**
+ * 检测期间的分步提示。只让这一小块每秒重渲染，表单其余部分不受计时器影响。
+ * 文案保持与后端语义一致但不耦合实现：并行化后不再是「第 n/5 种」，只说在试什么。
+ */
+function ProtocolTestProgress() {
+  const { t } = useTranslation();
+  const { token } = theme.useToken();
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setSeconds((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <span
+      role="status"
+      className="inline-flex flex-wrap items-center gap-x-2 text-xs"
+      style={{ color: token.colorTextSecondary }}
+    >
+      <span>{seconds >= 5 ? t("sites.protocolTestingSlow") : t("sites.protocolTestingHint")}</span>
+      <span className="tabular-nums">
+        {t("sites.protocolTestingElapsed", { seconds })}
+      </span>
+    </span>
+  );
 }
 
 export interface SiteFormInitialValues {
@@ -73,8 +137,15 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
     ok: boolean;
     protocol?: SiteProtocol;
     modelCount?: number;
+    /** 失败分类（连不上 / 认证被拒 / 接口不可识别）。 */
+    failureKind?: ProtocolTestFailureKind;
     error?: string;
+    /** 用户按了「取消等待」。 */
+    cancelled?: boolean;
   } | null>(null);
+  /** 只用于丢弃结果；后端命令没有取消通道，见 handleTestProtocol 的注释。 */
+  const protocolTestAbortRef = useRef<AbortController | null>(null);
+  const protocolTestRunRef = useRef(0);
   const [newapiTestResult, setNewapiTestResult] = useState<{
     ok: boolean;
     amount?: string;
@@ -186,6 +257,29 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
     };
   }, [open, site, form, initialValues, forceAdvancedOpen, getSiteApiKey, message, t]);
 
+  // 打开时清掉上一次的检测结果；关闭时停止等待（结果不再回填表单）。后端命令仍在
+  // 后台跑完——见 handleTestProtocol 里对取消语义的说明。
+  useEffect(() => {
+    if (open) {
+      setProtocolTestResult(null);
+      setProtocolTesting(false);
+      return;
+    }
+    protocolTestAbortRef.current?.abort();
+    protocolTestAbortRef.current = null;
+    protocolTestRunRef.current += 1;
+    setProtocolTesting(false);
+  }, [open]);
+
+  // 卸载（页面被回收等）时同样丢弃在途结果，避免对已卸载的组件落状态。
+  useEffect(
+    () => () => {
+      protocolTestAbortRef.current?.abort();
+      protocolTestRunRef.current += 1;
+    },
+    [],
+  );
+
   const handleTestProtocol = async () => {
     const values = form.getFieldsValue(["baseUrls", "apiKeys"]);
     const baseUrls = normalizeBaseUrls((values.baseUrls as string[] | undefined) ?? []);
@@ -198,6 +292,15 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
       message.error(t("sites.apiKeyRequired"));
       return;
     }
+    // 取消 = 丢弃这次等待的结果。Rust 侧的命令没有取消通道（IPC 调用不能中断），
+    // 所以点「取消等待」后后端仍会跑完这套检测；前端只是立刻解除绑定：按钮复位、
+    // 结果不再回填表单。UI 文案必须如实写成「取消等待」，不能写成「已取消检测」。
+    const controller = new AbortController();
+    protocolTestAbortRef.current?.abort();
+    protocolTestAbortRef.current = controller;
+    const runId = protocolTestRunRef.current + 1;
+    protocolTestRunRef.current = runId;
+
     setProtocolTesting(true);
     setProtocolTestResult(null);
     try {
@@ -205,6 +308,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         baseUrl: baseUrls[0],
         apiKey: keys[0].apiKey,
       });
+      if (controller.signal.aborted || protocolTestRunRef.current !== runId) return;
       setProtocolTestResult({
         ok: true,
         protocol: result.detectedProtocol,
@@ -221,14 +325,26 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         })
       );
     } catch (error) {
-      setProtocolTestResult({
-        ok: false,
-        error: isAppError(error) ? error.message : String(error),
-      });
-      message.error(t("sites.protocolTestFailed"));
+      if (controller.signal.aborted || protocolTestRunRef.current !== runId) return;
+      const failureKind = protocolTestFailureKind(error);
+      const detail = errorText(error) || t("sites.protocolTestFailed");
+      setProtocolTestResult({ ok: false, failureKind, error: detail });
+      message.error(t(PROTOCOL_TEST_FAILURE_KEYS[failureKind], { detail }));
     } finally {
-      setProtocolTesting(false);
+      if (protocolTestRunRef.current === runId) {
+        protocolTestAbortRef.current = null;
+        setProtocolTesting(false);
+      }
     }
+  };
+
+  const cancelProtocolTest = () => {
+    if (!protocolTestAbortRef.current) return;
+    protocolTestAbortRef.current.abort();
+    protocolTestAbortRef.current = null;
+    protocolTestRunRef.current += 1;
+    setProtocolTesting(false);
+    setProtocolTestResult({ ok: false, cancelled: true });
   };
 
   const handleTestNewapi = async () => {
@@ -366,7 +482,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
       width={560}
       destroyOnHidden
       centered
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
       styles={{
         container: {
           maxHeight: "calc(100vh - 32px)",
@@ -426,7 +542,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                         ]}
                       />
                     </Form.Item>
-                    <div className="mt-[-12px] mb-3 flex items-center gap-3">
+                    <div className="mt-[-12px] mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
                       <Button
                         size="small"
                         loading={protocolTesting}
@@ -434,10 +550,31 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                       >
                         {t("sites.testConnection")}
                       </Button>
-                      {protocolTestResult && (
+                      {protocolTesting && (
+                        <>
+                          <ProtocolTestProgress />
+                          <Button
+                            size="small"
+                            type="text"
+                            icon={<X size={12} />}
+                            aria-label={t("sites.protocolTestCancel")}
+                            onClick={cancelProtocolTest}
+                          >
+                            {t("sites.protocolTestCancel")}
+                          </Button>
+                        </>
+                      )}
+                      {!protocolTesting && protocolTestResult && (
                         <Text
-                          type={protocolTestResult.ok ? "success" : "danger"}
+                          type={
+                            protocolTestResult.ok
+                              ? "success"
+                              : protocolTestResult.cancelled
+                                ? "secondary"
+                                : "danger"
+                          }
                           style={{ fontSize: 12 }}
+                          role={protocolTestResult.ok ? undefined : "alert"}
                         >
                           {protocolTestResult.ok
                             ? t("sites.protocolDetected", {
@@ -446,8 +583,14 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                                   : t("sites.protocolAnthropic"),
                                 count: protocolTestResult.modelCount,
                               })
-                            : protocolTestResult.error}
-                        </Text>
+                            : protocolTestResult.cancelled
+                              ? t("sites.protocolTestCancelled")
+                              : t(
+                                  PROTOCOL_TEST_FAILURE_KEYS[
+                                    protocolTestResult.failureKind ?? "unknown"
+                                  ],
+                                  { detail: protocolTestResult.error ?? "" },
+                                )}                        </Text>
                       )}
                     </div>
                     <Form.Item name="notes" label={t("sites.notes")}>

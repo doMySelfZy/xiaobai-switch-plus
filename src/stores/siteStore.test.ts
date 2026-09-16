@@ -58,6 +58,7 @@ describe("siteStore fetchModels", () => {
       hydrated: false,
       fetchingModels: false,
       fetchingModelsByKey: {},
+      fetchingModelsBySite: {},
       error: null,
     });
   });
@@ -546,5 +547,67 @@ describe("siteStore fetchModels", () => {
     expect(result.models.some((m) => m.modelId === "gpt-4.1")).toBe(true);
     expect(useSiteStore.getState().sites[0]?.activeApiKeyId).toBe(secondId);
     expect(useSiteStore.getState().sites[0]?.activeApiKeyId).not.toBe(firstId);
+  });
+
+  it("keeps the previous model list while a key switch refreshes it", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Relay",
+      baseUrl: "https://api.example.com",
+      apiKey: fakeKey("one"),
+    });
+    await useSiteStore.getState().addApiKey(site.id, { apiKey: fakeKey("two") });
+    await useSiteStore.getState().fetchModels(site.id);
+    const before = (useSiteStore.getState().modelsBySite[site.id] ?? [])
+      .map((model) => model.modelId)
+      .sort();
+    expect(before).toEqual(["claude-sonnet-4", "gpt-4.1"]);
+    const secondId = useSiteStore.getState().sites[0]?.apiKeys?.find((key) => !key.isActive)?.id;
+    expect(secondId).toBeTruthy();
+
+    // 不 await：先看切换在途时的状态（store 在 await 之前同步落了一次 set）。
+    const pending = useSiteStore.getState().switchApiKey(site.id, secondId!, {
+      syncTargets: false,
+    });
+
+    // 模型列表在刷新期间必须保留：清空会让详情面板退回骨架屏（SitesPage 以「有没有
+    // 缓存条目」判断），切换密钥后用户要盯着空白等几十秒。
+    expect(
+      (useSiteStore.getState().modelsBySite[site.id] ?? []).map((model) => model.modelId).sort(),
+    ).toEqual(before);
+    // 刷新状态改由 per-site 标记表达。
+    expect(useSiteStore.getState().fetchingModelsBySite[site.id]).toBe(true);
+
+    await pending;
+    expect(useSiteStore.getState().fetchingModelsBySite[site.id]).toBeUndefined();
+    expect(
+      useSiteStore.getState().modelsBySite[site.id]?.some((model) => model.modelId === "gpt-4.1"),
+    ).toBe(true);
+  });
+
+  it("tracks in-flight model refresh per site instead of globally", async () => {
+    const alpha = await useSiteStore.getState().createSite({
+      name: "Alpha",
+      baseUrl: "https://alpha.example.com",
+      apiKey: fakeKey("alpha"),
+    });
+    const beta = await useSiteStore.getState().createSite({
+      name: "Beta",
+      baseUrl: "https://beta.example.com",
+      apiKey: fakeKey("beta"),
+    });
+
+    const alphaRun = useSiteStore.getState().fetchModels(alpha.id);
+    expect(useSiteStore.getState().fetchingModelsBySite[alpha.id]).toBe(true);
+    // 关键：另一个站点不受影响——页面上它的刷新按钮不该转圈。
+    expect(useSiteStore.getState().fetchingModelsBySite[beta.id]).toBeUndefined();
+
+    const betaRun = useSiteStore.getState().fetchModels(beta.id);
+    expect(useSiteStore.getState().fetchingModelsBySite[alpha.id]).toBe(true);
+    expect(useSiteStore.getState().fetchingModelsBySite[beta.id]).toBe(true);
+    expect(useSiteStore.getState().fetchingModels).toBe(true);
+
+    await Promise.all([alphaRun, betaRun]);
+    expect(useSiteStore.getState().fetchingModelsBySite).toEqual({});
+    expect(useSiteStore.getState().fetchingModels).toBe(false);
   });
 });

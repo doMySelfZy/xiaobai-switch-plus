@@ -623,14 +623,85 @@ fn github_archive_candidates(owner: &str, repo: &str) -> Vec<(String, bool)> {
     ]
 }
 
+/// 候选源探测的单次超时：只看响应头就断开，不下载内容。
+const ARCHIVE_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 探测期间连响应头都拿不到的候选，在兜底尝试时的单请求超时。
+///
+/// 这套候选源的坏情况是「网络把这些域名整体挂住」：改前 4 个候选串行、每个都等满
+/// 客户端 45s（最坏 180s）才报错。探测已经把「有没有响应头」问出来了，兜底就不该
+/// 再给每个没响应的候选 45s，否则最坏等待原样保留。
+const ARCHIVE_FALLBACK_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// 一个候选源的探测结果。只用来排序与选超时，不决定「能不能装」：探测失败
+/// 不代表候选不可用，它只是排在后面、用更短的超时兜底。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArchiveProbe {
+    /// 响应头 2xx：优先尝试。
+    Ready,
+    /// 服务器给了答复但不是 2xx（分支不存在 / 需要认证等）：保持原优先级。
+    Answered,
+    /// 超时或连接失败：排到最后。
+    Unresponsive,
+}
+
+fn probe_rank(probe: ArchiveProbe) -> u8 {
+    match probe {
+        ArchiveProbe::Ready => 0,
+        ArchiveProbe::Answered => 1,
+        ArchiveProbe::Unresponsive => 2,
+    }
+}
+
+/// 并行探测候选源（HEAD，不落盘、不占内存、不下载内容）。
+async fn probe_archive_candidates(
+    client: &reqwest::Client,
+    candidates: &[(String, bool)],
+) -> Vec<ArchiveProbe> {
+    let probes = candidates.iter().map(|(url, github_api)| async move {
+        let mut request = client.head(url);
+        if *github_api {
+            request = request.header("Accept", "application/vnd.github+json");
+        }
+        match tokio::time::timeout(ARCHIVE_PROBE_TIMEOUT, request.send()).await {
+            Ok(Ok(response)) if response.status().is_success() => ArchiveProbe::Ready,
+            Ok(Ok(_)) => ArchiveProbe::Answered,
+            // 探测超时/连接失败：候选仍会被兜底尝试，只是排在最后。
+            Ok(Err(_)) | Err(_) => ArchiveProbe::Unresponsive,
+        }
+    });
+    futures_util::future::join_all(probes).await
+}
+
+/// 按探测结果排序候选索引：可用 → 有答复 → 无响应；同组内保持原优先级
+/// （`sort_by_key` 是稳定排序）。返回索引，调用方据此取 URL 与超时。
+fn order_archive_candidates(probes: &[ArchiveProbe]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..probes.len()).collect();
+    order.sort_by_key(|index| probe_rank(probes[*index]));
+    order
+}
+
+/// 某个候选在下载阶段该用的单请求超时：无响应的候选用短超时兜底，其余沿用
+/// 客户端的 45s（真正在下载内容，不能按探测超时切）。
+fn candidate_download_timeout(probe: ArchiveProbe) -> Option<Duration> {
+    match probe {
+        ArchiveProbe::Unresponsive => Some(ARCHIVE_FALLBACK_TIMEOUT),
+        ArchiveProbe::Ready | ArchiveProbe::Answered => None,
+    }
+}
+
 async fn download_limited_bytes(
     client: &reqwest::Client,
     url: &str,
     github_api: bool,
+    timeout: Option<Duration>,
 ) -> AppResult<Vec<u8>> {
     let mut request = client.get(url);
     if github_api {
         request = request.header("Accept", "application/vnd.github+json");
+    }
+    if let Some(timeout) = timeout {
+        request = request.timeout(timeout);
     }
     let response = request.send().await?;
     let status = response.status();
@@ -665,9 +736,15 @@ async fn download_github_archive(
     repo: &str,
 ) -> AppResult<Vec<u8>> {
     let client = crate::http_client::build_client(settings, Duration::from_secs(45))?;
+    let candidates = github_archive_candidates(owner, repo);
+    // 先并行探一次响应头（只影响顺序与兜底超时，不下载内容、不丢候选），
+    // 再按原逻辑下载并顺延到下一个候选。
+    let probes = probe_archive_candidates(&client, &candidates).await;
     let mut last_error = None;
-    for (url, github_api) in github_archive_candidates(owner, repo) {
-        match download_limited_bytes(&client, &url, github_api).await {
+    for index in order_archive_candidates(&probes) {
+        let (url, github_api) = &candidates[index];
+        let timeout = candidate_download_timeout(probes[index]);
+        match download_limited_bytes(&client, url, *github_api, timeout).await {
             Ok(bytes) => return Ok(bytes),
             Err(error) => last_error = Some(error),
         }
@@ -1490,6 +1567,74 @@ mod tests {
         assert!(!urls[0].1);
         assert!(urls.last().unwrap().0.contains("api.github.com"));
         assert!(urls.last().unwrap().1);
+    }
+
+    /// 探测只重排、不丢候选：可用的排最前，无响应的排最后，同组内保持原优先级。
+    #[test]
+    fn archive_probe_order_keeps_original_priority_within_groups() {
+        let order = order_archive_candidates(&[
+            ArchiveProbe::Unresponsive, // 0: github.com
+            ArchiveProbe::Ready,        // 1: codeload main
+            ArchiveProbe::Unresponsive, // 2: codeload master
+            ArchiveProbe::Answered,     // 3: api.github.com（404/403 也算有答复）
+        ]);
+        assert_eq!(order, vec![1, 3, 0, 2]);
+        assert_eq!(order.len(), github_archive_candidates("o", "r").len());
+    }
+
+    /// 无响应的候选才用短超时兜底：其余候选是在真正下载内容，不能被探测超时切掉。
+    #[test]
+    fn only_unresponsive_candidates_use_the_short_fallback_timeout() {
+        assert_eq!(candidate_download_timeout(ArchiveProbe::Ready), None);
+        assert_eq!(candidate_download_timeout(ArchiveProbe::Answered), None);
+        assert_eq!(
+            candidate_download_timeout(ArchiveProbe::Unresponsive),
+            Some(ARCHIVE_FALLBACK_TIMEOUT)
+        );
+        assert!(ARCHIVE_FALLBACK_TIMEOUT < Duration::from_secs(45));
+    }
+
+    /// 探测分类：有响应头（含非 2xx）与连不上要分开，后者才走短超时兜底。
+    #[tokio::test]
+    async fn probe_classifies_responses_and_dead_hosts() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buffer = [0_u8; 1024];
+                    let _ = socket.read(&mut buffer).await;
+                    let _ = socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
+                });
+            }
+        });
+
+        // 一个立即关闭的端口 = 连不上。
+        let dead = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            drop(listener);
+            format!("http://{address}/x.zip")
+        };
+
+        // 显式关代理：测试只走 127.0.0.1，不碰系统代理配置。
+        let mut settings = AppSettings::default();
+        settings.proxy_mode = "none".into();
+        let client = crate::http_client::build_client(&settings, Duration::from_secs(5)).unwrap();
+        let candidates = vec![
+            (format!("http://{address}/ok.zip"), false),
+            (dead, false),
+        ];
+        // `join_all` 按输入顺序返回，与完成顺序无关。
+        let probes = probe_archive_candidates(&client, &candidates).await;
+        assert_eq!(probes, vec![ArchiveProbe::Ready, ArchiveProbe::Unresponsive]);
     }
 
     fn skill_markdown(name: &str) -> String {
