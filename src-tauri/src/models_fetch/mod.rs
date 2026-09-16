@@ -35,11 +35,12 @@ const CLAUDE_CODE_UA: &str = "claude-cli/2.0.14 (external, cli)";
 
 /// 探测类请求的单次超时，与 `quota_probe::PROBE_TIMEOUT` 同口径。
 /// 改前这里写 15s，且同一个 URL 的多种鉴权组合是串行等待（5 × 15s = 最坏 75s）。
-const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+/// 降低到 5s 让连接失败的站点更快返回，避免让用户等太久。
+const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 整组并行尝试的总预算：单次超时 + 一点调度余量，只作为兜底（正常情况下
 /// 请求自身的超时先生效）。
-const PROBE_BUDGET: Duration = Duration::from_secs(10);
+const PROBE_BUDGET: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthStyle {
