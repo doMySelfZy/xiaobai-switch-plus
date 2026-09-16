@@ -32,10 +32,13 @@ pub async fn discover_mcp_registry(
     let only_local = local_only.unwrap_or(false);
     let target = min_results.unwrap_or(20) as usize;
 
-    let requests = registry::DISCOVERY_TERMS.iter().map(|term| {
+    // 先收集所有 term 为 String，避免生命周期问题
+    let terms: Vec<String> = registry::DISCOVERY_TERMS.iter().map(|s| s.to_string()).collect();
+    
+    let requests = terms.into_iter().map(|term| {
         let client = client.clone();
-        let url = registry::search_url(term, None, Some(50));
         async move {
+            let url = registry::search_url(&term, None, Some(50));
             let response = client.get(&url).send().await.ok()?;
             if !response.status().is_success() {
                 return None;
@@ -45,8 +48,12 @@ pub async fn discover_mcp_registry(
         }
     });
 
-    // 并发拉取：串行会让首屏等待明显变长。个别类目失败不影响整体（ok() 折叠成 None）。
-    let pages = futures_util::future::join_all(requests).await;
+    // 并发拉取：限制最多 3 个并发请求，避免过载。个别类目失败不影响整体（ok() 折叠成 None）。
+    use futures_util::stream::{self, StreamExt};
+    let pages: Vec<_> = stream::iter(requests)
+        .buffer_unordered(3)
+        .collect()
+        .await;
     let batches: Vec<Vec<registry::RegistryCandidate>> =
         pages.into_iter().flatten().map(|page| page.candidates).collect();
     if batches.is_empty() {
