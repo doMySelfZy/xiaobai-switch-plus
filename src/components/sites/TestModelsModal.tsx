@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Checkbox, Input, Modal, Segmented, Tooltip, theme } from "antd";
 import { Check, Loader2, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -23,6 +23,9 @@ interface RowResult {
   error?: string;
 }
 
+/** 未开始探测的行共用一个常量，保证 memo 行引用的稳定。 */
+const IDLE_RESULT: RowResult = { status: "idle" };
+
 export function TestModelsModal({ open, site, models, onClose }: Props) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -31,28 +34,59 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [mode, setMode] = useState<ProbeMode>("serial");
   const [running, setRunning] = useState(false);
-  const [results, setResults] = useState<Record<string, RowResult>>({});
+  // 探测结果先原地累积在 ref 里，按帧批量 flush 到 state。一个结果一次 setState 会让
+  // 整张列表每次都重渲染（整轮 O(N²)）；flush 时复制一次，未变化的行仍共享同一个
+  // result 引用，配合 memo 行只重渲染真正变了的那几行。
+  const resultsRef = useRef<Record<string, RowResult>>({});
+  const finishedRef = useRef(0);
+  const frameRef = useRef<number | null>(null);
+  const [snapshot, setSnapshot] = useState<{ results: Record<string, RowResult>; finished: number }>(
+    { results: {}, finished: 0 },
+  );
   const abortRef = useRef<AbortController | null>(null);
   const modelKey = models.map((m) => m.modelId).join("\0");
+
+  const flushNow = useCallback(() => {
+    setSnapshot({ results: { ...resultsRef.current }, finished: finishedRef.current });
+  }, []);
+
+  const cancelScheduledFlush = useCallback(() => {
+    if (frameRef.current !== null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+  }, []);
+
+  const scheduleFlush = useCallback(() => {
+    if (frameRef.current !== null) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      flushNow();
+    });
+  }, [flushNow]);
 
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setSelectedIds(new Set(models.map((m) => m.modelId)));
     setMode("serial");
-    setResults({});
     setRunning(false);
     abortRef.current?.abort();
     abortRef.current = null;
+    cancelScheduledFlush();
+    resultsRef.current = {};
+    finishedRef.current = 0;
+    flushNow();
     // Reset against the model ids present when the dialog opens / site changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, site?.id, modelKey]);
+  }, [open, site?.id, modelKey, cancelScheduledFlush, flushNow]);
 
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      cancelScheduledFlush();
     };
-  }, []);
+  }, [cancelScheduledFlush]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -68,19 +102,22 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
   const totalCount = models.length;
   const allSelected = totalCount > 0 && selectedCount === totalCount;
   const someSelected = selectedCount > 0 && selectedCount < totalCount;
-  const finishedCount = Object.values(results).filter(
-    (row) => row.status === "ok" || row.status === "error",
-  ).length;
+  const results = snapshot.results;
+  const finishedCount = snapshot.finished;
 
-  const toggleOne = (modelId: string) => {
-    if (running) return;
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(modelId)) next.delete(modelId);
-      else next.add(modelId);
-      return next;
-    });
-  };
+  // 稳定引用：memo 行不会因为父组件重渲染而全部重渲染。
+  const toggleOne = useCallback(
+    (modelId: string) => {
+      if (running) return;
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(modelId)) next.delete(modelId);
+        else next.add(modelId);
+        return next;
+      });
+    },
+    [running],
+  );
 
   const toggleGroup = (ids: string[], checked: boolean) => {
     if (running) return;
@@ -101,6 +138,7 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
 
   const handleClose = () => {
     abortRef.current?.abort();
+    cancelScheduledFlush();
     onClose();
   };
 
@@ -111,11 +149,10 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
     abortRef.current?.abort();
     abortRef.current = controller;
     setRunning(true);
-    setResults((prev) => {
-      const next = { ...prev };
-      for (const id of ids) next[id] = { status: "idle" };
-      return next;
-    });
+    resultsRef.current = {};
+    finishedRef.current = 0;
+    for (const id of ids) resultsRef.current[id] = IDLE_RESULT;
+    flushNow();
 
     let ok = 0;
     let fail = 0;
@@ -126,24 +163,27 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
         mode,
         signal: controller.signal,
         onStart: (modelId) => {
-          setResults((prev) => ({ ...prev, [modelId]: { status: "running" } }));
+          resultsRef.current[modelId] = { status: "running" };
+          scheduleFlush();
         },
         onResult: (result) => {
           if (result.ok) ok += 1;
           else fail += 1;
-          setResults((prev) => ({
-            ...prev,
-            [result.modelId]: result.ok
-              ? { status: "ok", latencyMs: result.latencyMs }
-              : {
-                  status: "error",
-                  latencyMs: result.latencyMs,
-                  error: result.error || t("sites.testFail"),
-                },
-          }));
+          finishedRef.current += 1;
+          resultsRef.current[result.modelId] = result.ok
+            ? { status: "ok", latencyMs: result.latencyMs }
+            : {
+                status: "error",
+                latencyMs: result.latencyMs,
+                error: result.error || t("sites.testFail"),
+              };
+          scheduleFlush();
         },
       });
     } finally {
+      // 收尾：撤掉未执行的帧回调并立刻同步一次，进度/结果不会停在半帧上。
+      cancelScheduledFlush();
+      flushNow();
       setRunning(false);
     }
 
@@ -163,7 +203,7 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
       width={720}
       destroyOnHidden
       centered
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
       footer={
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -251,33 +291,17 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
                       </ModelCountBadge>
                     </div>
                     <div className="flex flex-col">
-                      {group.models.map((model) => {
-                        const result = results[model.modelId] ?? { status: "idle" as const };
-                        const label = model.displayName || model.modelId;
-                        return (
-                          <div
-                            key={model.id || model.modelId}
-                            data-model-probe-row={model.modelId}
-                            data-probe-status={result.status}
-                            className="flex items-center gap-2 py-1"
-                          >
-                            <Checkbox
-                              checked={selectedIds.has(model.modelId)}
-                              disabled={running}
-                              aria-label={model.modelId}
-                              onChange={() => toggleOne(model.modelId)}
-                            />
-                            <span
-                              className="min-w-0 flex-1 truncate"
-                              title={model.modelId}
-                              style={{ color: token.colorText }}
-                            >
-                              {label}
-                            </span>
-                            <ProbeStatus result={result} />
-                          </div>
-                        );
-                      })}
+                      {group.models.map((model) => (
+                        <ProbeRow
+                          key={model.id || model.modelId}
+                          modelId={model.modelId}
+                          label={model.displayName || model.modelId}
+                          checked={selectedIds.has(model.modelId)}
+                          disabled={running}
+                          result={results[model.modelId] ?? IDLE_RESULT}
+                          onToggle={toggleOne}
+                        />
+                      ))}
                     </div>
                   </div>
                 );
@@ -289,6 +313,48 @@ export function TestModelsModal({ open, site, models, onClose }: Props) {
     </Modal>
   );
 }
+
+interface ProbeRowProps {
+  modelId: string;
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  result: RowResult;
+  onToggle: (modelId: string) => void;
+}
+
+/**
+ * 单行用 memo 包住：一次 flush 只让结果真的变了的那几行重渲染，而不是整张列表。
+ * onToggle 由父组件 useCallback 提供稳定引用，否则 memo 会被新函数引用击穿。
+ */
+const ProbeRow = memo(function ProbeRow({
+  modelId,
+  label,
+  checked,
+  disabled,
+  result,
+  onToggle,
+}: ProbeRowProps) {
+  const { token } = theme.useToken();
+  return (
+    <div
+      data-model-probe-row={modelId}
+      data-probe-status={result.status}
+      className="flex items-center gap-2 py-1"
+    >
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        aria-label={modelId}
+        onChange={() => onToggle(modelId)}
+      />
+      <span className="min-w-0 flex-1 truncate" title={modelId} style={{ color: token.colorText }}>
+        {label}
+      </span>
+      <ProbeStatus result={result} />
+    </div>
+  );
+});
 
 function ProbeStatus({ result }: { result: RowResult }) {
   const { token } = theme.useToken();

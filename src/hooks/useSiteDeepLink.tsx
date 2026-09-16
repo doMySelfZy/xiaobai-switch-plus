@@ -237,16 +237,23 @@ export function useSiteDeepLink({ modal, message }: { modal: ModalLike; message:
           void invoke("restore_main_window").catch(() => undefined);
           handleUrls(urls);
         });
-        const poll = window.setInterval(() => {
-          if (disposed) return;
-          void invoke<string | null>("take_pending_deep_link")
-            .then((url) => {
-              if (url) handleUrls([url]);
-            })
-            .catch(() => undefined);
-        }, 400);
+        // 写 pending-deeplink.url 的只有 macOS 分支，别的平台轮询一个永远不会出现的
+        // 文件纯属浪费（每 400ms 一次 IPC）。读不到能力时按「需要」处理，保住 macOS 行为。
+        const needsPolling = await invoke<boolean>("deep_link_requires_polling").catch(
+          () => true,
+        );
+        const poll = needsPolling
+          ? window.setInterval(() => {
+              if (disposed) return;
+              void invoke<string | null>("take_pending_deep_link")
+                .then((url) => {
+                  if (url) handleUrls([url]);
+                })
+                .catch(() => undefined);
+            }, 400)
+          : null;
         unlisten = () => {
-          window.clearInterval(poll);
+          if (poll !== null) window.clearInterval(poll);
           stopPlugin();
         };
       } catch (e) {

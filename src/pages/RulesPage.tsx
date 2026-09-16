@@ -29,7 +29,14 @@ function errorText(error: unknown): string {
 export function RulesPage() {
   const { t } = useTranslation();
   const { token } = theme.useToken();
-  const { body, targets, loading, paths, load, loadPaths, save } = useRulesStore();
+  // 按字段订阅：任一字段更新不再整页重渲染（与 Proxy/MCP/Skills 页保持一致）。
+  const body = useRulesStore((s) => s.body);
+  const targets = useRulesStore((s) => s.targets);
+  const loading = useRulesStore((s) => s.loading);
+  const paths = useRulesStore((s) => s.paths);
+  const load = useRulesStore((s) => s.load);
+  const loadPaths = useRulesStore((s) => s.loadPaths);
+  const save = useRulesStore((s) => s.save);
 
   const [draft, setDraft] = useState("");
   const [selected, setSelected] = useState<TargetKind[]>([]);

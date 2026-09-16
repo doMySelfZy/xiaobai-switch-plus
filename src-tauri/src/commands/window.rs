@@ -245,6 +245,13 @@ pub fn take_pending_deep_link() -> AppResult<Option<String>> {
     crate::macos_scheme::take_pending_deep_link()
 }
 
+/// 前端是否需要为待处理深链起定时轮询。Windows / Linux 上是 false：
+/// 运行时深链走 `onOpenUrl` 事件、启动时走 `getCurrent()`，没有代码会写待处理文件。
+#[tauri::command]
+pub fn deep_link_requires_polling() -> bool {
+    crate::macos_scheme::requires_polling()
+}
+
 #[tauri::command]
 pub fn restore_main_window(app: tauri::AppHandle) -> AppResult<()> {
     crate::window_lifecycle::restore_main_window(&app);

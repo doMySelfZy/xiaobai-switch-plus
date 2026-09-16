@@ -629,10 +629,14 @@ describe("SitesPage", () => {
     expect(within(dialog).getByRole("button", { name: /取\s*消/ })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /跳\s*过/ })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /清\s*除/ })).toBeInTheDocument();
-    expect(useSiteStore.getState().sites[0]?.enabled).toBe(true);
+    // 乐观更新：开关先落下、弹窗用已缓存的状态判断，不再等强制 CLI 探测。
+    expect(useSiteStore.getState().sites[0]?.enabled).toBe(false);
 
+    // 「取消」= 不停用：回滚乐观更新。
     fireEvent.click(within(dialog).getByRole("button", { name: /取\s*消/ }));
-    expect(useSiteStore.getState().sites[0]?.enabled).toBe(true);
+    await waitFor(() => {
+      expect(useSiteStore.getState().sites[0]?.enabled).toBe(true);
+    });
   });
 
   it("can skip clearing and only disable the site", async () => {
@@ -814,7 +818,7 @@ describe("SitesPage", () => {
     probe.mockRestore();
   });
 
-  it("auto-refreshes list quota on an interval while visible, and skips hidden pages", async () => {
+  it("auto-refreshes list quota on an interval without bypassing the TTL", async () => {
     await act(async () => {
       await useSiteStore.getState().createSite({
         name: "Alpha",
@@ -843,21 +847,79 @@ describe("SitesPage", () => {
     const auto = intervals.find((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS);
     expect(auto).toBeDefined();
 
-    const visibility = vi
-      .spyOn(document, "visibilityState", "get")
-      .mockReturnValue("hidden");
+    // 后台轮询不 force：5 分钟 TTL 内再触发一次也不该真的发请求。
     await act(async () => {
       auto!.fn();
     });
     expect(getBrowserQuotaProbeCallCount()).toBe(afterMount);
 
-    visibility.mockReturnValue("visible");
+    // TTL 过期后非强制刷新才允许穿透。
+    const siteId = useSiteStore.getState().sites[0]!.id;
+    const attempt = useSiteStore.getState().quotaAttemptBySite[siteId];
+    useSiteStore.setState({
+      quotaAttemptBySite: {
+        ...useSiteStore.getState().quotaAttemptBySite,
+        [siteId]: { ...attempt, fetchedAt: Date.now() - QUOTA_TTL_MS },
+      },
+    });
     await act(async () => {
       auto!.fn();
     });
     expect(getBrowserQuotaProbeCallCount()).toBeGreaterThan(afterMount);
 
-    visibility.mockRestore();
+    setIntervalSpy.mockRestore();
+  });
+
+  it("does not probe quota while another page is the active one", async () => {
+    await act(async () => {
+      await useSiteStore.getState().createSite({
+        name: "Alpha",
+        baseUrl: "https://alpha.example.com",
+        apiKey: "sk-test",
+      });
+      // KeepAlive 让本页常驻：用户在别的页面时，本页不该打任何探测请求。
+      useUIStore.setState({ activePage: "mcp" });
+    });
+    const intervals: Array<{ fn: () => void; ms: number }> = [];
+    const setIntervalSpy = vi
+      .spyOn(window, "setInterval")
+      .mockImplementation(((fn: () => void, ms?: number) => {
+        intervals.push({ fn, ms: ms ?? 0 });
+        return 0 as unknown as ReturnType<typeof window.setInterval>;
+      }) as unknown as typeof window.setInterval);
+
+    render(
+      <Wrapper>
+        <SitesPage />
+      </Wrapper>,
+    );
+    await act(async () => {});
+    expect(getBrowserQuotaProbeCallCount()).toBe(0);
+    expect(intervals.some((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS)).toBe(false);
+
+    // 切回站点页：注册轮询并补一次非强制刷新。
+    await act(async () => {
+      useUIStore.setState({ activePage: "sites" });
+    });
+    await waitFor(() => {
+      expect(getBrowserQuotaProbeCallCount()).toBe(1);
+    });
+    const auto = intervals.find((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS);
+    expect(auto).toBeDefined();
+    // TTL 还新鲜：再补刷一次也不会真的发请求（后台刷新不 force）。
+    await act(async () => {
+      auto!.fn();
+    });
+    expect(getBrowserQuotaProbeCallCount()).toBe(1);
+
+    // 离开站点页：effect 随 pageVisible 清理，定时器不再注册。
+    await act(async () => {
+      useUIStore.setState({ activePage: "apply" });
+    });
+    expect(
+      intervals.filter((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS).length,
+    ).toBe(1);
+
     setIntervalSpy.mockRestore();
   });
 

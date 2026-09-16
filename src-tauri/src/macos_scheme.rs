@@ -40,6 +40,16 @@ pub fn take_pending_deep_link() -> AppResult<Option<String>> {
     Ok(parse_pending_deep_link_file(&raw))
 }
 
+/// 前端是否需要定时轮询待处理深链。
+///
+/// 写 `pending-deeplink.url` 的只有 macOS 分支（`install_dev_url_handler` 注册的
+/// AppleScript 处理器：`tauri dev` 下 Launch Services 看不到 CFBundleURLTypes）。
+/// Windows / Linux 的运行时深链由 deep-link 插件的 `onOpenUrl` 事件送达，启动时还有
+/// `getCurrent()`，轮询一个永远不会被写入的文件纯属浪费（每 400ms 一次 IPC）。
+pub fn requires_polling() -> bool {
+    cfg!(target_os = "macos")
+}
+
 #[cfg(target_os = "macos")]
 pub fn install_dev_url_handler() -> AppResult<PathBuf> {
     ensure_app_dirs()?;
@@ -168,5 +178,12 @@ mod tests {
         assert_eq!(parse_pending_deep_link_file("https://example.com"), None);
         assert_eq!(parse_pending_deep_link_file(""), None);
         assert_eq!(parse_pending_deep_link_file("aqbot://providers"), None);
+    }
+
+    #[test]
+    fn polling_is_only_required_where_the_pending_file_gets_written() {
+        // 写这个文件的路径只有 macOS 的 URL handler。谁把这里改成「所有平台都要轮询」，
+        // 就等于把 Windows 上每 400ms 一次的空 IPC 加回来。
+        assert_eq!(requires_polling(), cfg!(target_os = "macos"));
     }
 }

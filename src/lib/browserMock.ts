@@ -1582,6 +1582,9 @@ export async function handleBrowserCommand<T>(
       return undefined as T;
     case "take_pending_deep_link":
       return null as T;
+    // 浏览器里没有写 pending-deeplink.url 的平台分支（真实实现 = cfg!(target_os = "macos")）。
+    case "deep_link_requires_polling":
+      return false as T;
     case "fetch_http_text": {
       const url = String(args?.url ?? "");
       return {

@@ -184,6 +184,35 @@ describe("TestModelsModal", () => {
     expect(within(dialog).getByRole("button", { name: "立即测试" })).toBeDisabled();
   });
 
+  it("cancels the pending result frame when the dialog is closed mid-run", async () => {
+    const { site, models } = await seedSite();
+    const onClose = vi.fn();
+    render(
+      <Wrapper>
+        <TestModelsModal open site={site} models={models} onClose={onClose} />
+      </Wrapper>,
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    // 结果按帧批量提交：把 rAF 钉住，观察关闭时是否把未执行的帧回调撤掉。
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((() => 7) as unknown as typeof window.requestAnimationFrame);
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "立即测试" }));
+    await waitFor(() => {
+      expect(rafSpy).toHaveBeenCalled();
+    });
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /取\s*消/ }));
+    expect(cancelSpy).toHaveBeenCalledWith(7);
+    expect(onClose).toHaveBeenCalled();
+
+    rafSpy.mockRestore();
+    cancelSpy.mockRestore();
+  });
+
   it("clears results and restores selection after close and reopen", async () => {
     const { site, models } = await seedSite();
     const onClose = vi.fn();

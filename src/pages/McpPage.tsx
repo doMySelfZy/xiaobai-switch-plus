@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   App,
@@ -159,35 +159,67 @@ function hostOf(url: string): string | null {
   }
 }
 
+interface RegistrySearchBarProps {
+  searching: boolean;
+  onSubmit: (query: string) => void;
+  onQueryChange: (query: string) => void;
+}
+
+/**
+ * 仓库搜索框：输入值留在组件内部，击键只重渲染这个输入框，
+ * 不会带着整页（仓库结果列表 + 已保存 MCP 表格）一起重渲染。
+ * 父组件只通过 onQueryChange 记一份 ref（供「只看本地」切换时重查用）。
+ */
+function RegistrySearchBar({ searching, onSubmit, onQueryChange }: RegistrySearchBarProps) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState("");
+
+  const submit = () => onSubmit(value);
+
+  return (
+    <Space.Compact style={{ width: "100%" }}>
+      <Input
+        value={value}
+        onChange={(event) => {
+          setValue(event.target.value);
+          onQueryChange(event.target.value);
+        }}
+        onPressEnter={submit}
+        placeholder={t("mcp.registrySearchPlaceholder")}
+        allowClear
+      />
+      <Button type="primary" icon={<SearchOutlined />} loading={searching} onClick={submit}>
+        {searching ? t("mcp.registrySearching") : t("mcp.registrySearch")}
+      </Button>
+    </Space.Compact>
+  );
+}
+
 export function McpPage() {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const { message, modal } = App.useApp();
-  const {
-    servers,
-    loading,
-    loadServers,
-    getServer,
-    saveServer,
-    deleteServer,
-    applyServers,
-    searchRegistry,
-    discoverRegistry,
-    scanExisting,
-    importScanned,
-  } = useMcpStore();
+  // 按字段订阅：任一 store 更新不再整页重渲染（表格与仓库列表都很贵）。
+  const servers = useMcpStore((s) => s.servers);
+  const loading = useMcpStore((s) => s.loading);
+  const loadServers = useMcpStore((s) => s.loadServers);
+  const getServer = useMcpStore((s) => s.getServer);
+  const saveServer = useMcpStore((s) => s.saveServer);
+  const deleteServer = useMcpStore((s) => s.deleteServer);
+  const applyServers = useMcpStore((s) => s.applyServers);
+  const searchRegistry = useMcpStore((s) => s.searchRegistry);
+  const discoverRegistry = useMcpStore((s) => s.discoverRegistry);
+  const scanExisting = useMcpStore((s) => s.scanExisting);
+  const importScanned = useMcpStore((s) => s.importScanned);
 
-  const updateStore = useMcpUpdateStore();
-  const {
-    updateStatuses,
-    checking,
-    updating,
-    hasAnyUpdate,
-    updateCount,
-    checkUpdates,
-    updateServer: updateSingleServer,
-    updateAll,
-  } = updateStore;
+  const updateStatuses = useMcpUpdateStore((s) => s.updateStatuses);
+  const checking = useMcpUpdateStore((s) => s.checking);
+  const updating = useMcpUpdateStore((s) => s.updating);
+  const hasAnyUpdate = useMcpUpdateStore((s) => s.hasAnyUpdate);
+  const updateCount = useMcpUpdateStore((s) => s.updateCount);
+  const checkUpdates = useMcpUpdateStore((s) => s.checkUpdates);
+  const updateSingleServer = useMcpUpdateStore((s) => s.updateServer);
+  const updateAll = useMcpUpdateStore((s) => s.updateAll);
 
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -205,8 +237,8 @@ export function McpPage() {
   const [requiredValues, setRequiredValues] = useState<Record<string, string>>({});
   const [requiredErrors, setRequiredErrors] = useState<Record<string, boolean>>({});
 
-  // 仓库搜索状态
-  const [query, setQuery] = useState("");
+  // 仓库搜索状态：查询词只记在 ref 里（输入框自身持有 state），切换「只看本地」时用它重查。
+  const queryRef = useRef("");
   const [localOnly, setLocalOnly] = useState(true);
   const [searching, setSearching] = useState(false);
   const [candidates, setCandidates] = useState<RegistryCandidate[]>([]);
@@ -258,7 +290,7 @@ export function McpPage() {
     setOpen(true);
   };
 
-  const openEdit = async (id: string) => {
+  const openEdit = useCallback(async (id: string) => {
     try {
       const server = await getServer(id);
       setEditingId(server.id);
@@ -278,7 +310,7 @@ export function McpPage() {
     } catch (error) {
       void message.error(errorText(error));
     }
-  };
+  }, [getServer, form, message]);
 
   /** 从仓库条目进入表单：自动填好命令/地址，只留必填密钥给用户。 */
   const openFromRegistry = (candidate: RegistryCandidate, targets: TargetKind[]) => {
@@ -440,32 +472,7 @@ export function McpPage() {
     if (await persist(input)) setOpen(false);
   };
 
-  const handleDelete = (record: McpServerSummary) => {
-    modal.confirm({
-      centered: true,
-      title: t("mcp.delete"),
-      content: (
-        <div>
-          <div>{t("mcp.deleteConfirm", { name: record.name })}</div>
-          <div style={{ marginTop: 8, color: token.colorTextTertiary }}>
-            {t("mcp.deleteCleansTargets")}
-          </div>
-        </div>
-      ),
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          const result = await deleteServer(record.id);
-          void message.success(t("common.success"));
-          showApplyOutcome(result);
-        } catch (error) {
-          void message.error(errorText(error));
-        }
-      },
-    });
-  };
-
-  const showApplyOutcome = (result: {
+  const showApplyOutcome = useCallback((result: {
     results: { target: TargetKind; ok: boolean; message: string }[];
   }) => {
     if (result.results.length === 0) return;
@@ -496,7 +503,35 @@ export function McpPage() {
       ),
       okText: t("common.confirm"),
     });
-  };
+  }, [modal, t, targetLabel, token.colorError]);
+
+  const handleDelete = useCallback(
+    (record: McpServerSummary) => {
+      modal.confirm({
+        centered: true,
+        title: t("mcp.delete"),
+        content: (
+          <div>
+            <div>{t("mcp.deleteConfirm", { name: record.name })}</div>
+            <div style={{ marginTop: 8, color: token.colorTextTertiary }}>
+              {t("mcp.deleteCleansTargets")}
+            </div>
+          </div>
+        ),
+        okButtonProps: { danger: true },
+        onOk: async () => {
+          try {
+            const result = await deleteServer(record.id);
+            void message.success(t("common.success"));
+            showApplyOutcome(result);
+          } catch (error) {
+            void message.error(errorText(error));
+          }
+        },
+      });
+    },
+    [modal, t, token.colorTextTertiary, deleteServer, message, showApplyOutcome],
+  );
 
   // ---------------------------------------------------------------------
   // 仓库搜索
@@ -522,7 +557,7 @@ export function McpPage() {
   };
 
   const runSearch = async (cursor?: string | null) => {
-    const term = query.trim();
+    const term = queryRef.current.trim();
     setSearching(true);
     try {
       const result = await searchRegistry(term, {
@@ -547,14 +582,14 @@ export function McpPage() {
     // 过滤在后端做，切换后必须重查，否则列表和开关会对不上。
     setCandidates([]);
     setNextCursor(null);
-    if (query.trim()) void runSearchAgain(checked);
+    if (queryRef.current.trim()) void runSearchAgain(checked);
     else void browseRecent(checked);
   };
 
   const runSearchAgain = async (onlyLocal: boolean) => {
     setSearching(true);
     try {
-      const result = await searchRegistry(query.trim(), {
+      const result = await searchRegistry(queryRef.current.trim(), {
         localOnly: onlyLocal,
         minResults: FILL_TARGET,
       });
@@ -631,15 +666,18 @@ export function McpPage() {
     return TARGETS.filter((target) => set.has(target));
   }, [servers]);
 
-  const handleUpdate = async (id: string) => {
-    try {
-      await updateSingleServer(id);
-      void message.success(t("mcp.updateSuccess"));
-      await loadServers();
-    } catch (error) {
-      void message.error(errorText(error));
-    }
-  };
+  const handleUpdate = useCallback(
+    async (id: string) => {
+      try {
+        await updateSingleServer(id);
+        void message.success(t("mcp.updateSuccess"));
+        await loadServers();
+      } catch (error) {
+        void message.error(errorText(error));
+      }
+    },
+    [updateSingleServer, message, t, loadServers],
+  );
 
   const handleUpdateAll = async () => {
     modal.confirm({
@@ -671,7 +709,8 @@ export function McpPage() {
 
   const handleCheckUpdates = async () => {
     try {
-      await checkUpdates();
+      // 手动刷新绕过 store 的新鲜度窗口：窗口内直接复用缓存会让按钮看起来「点了没反应」。
+      await checkUpdates({ force: true });
       void message.success(t("mcp.checkUpdatesSuccess"));
     } catch (error) {
       void message.error(errorText(error));
@@ -702,7 +741,9 @@ export function McpPage() {
     }
   };
 
-  const columns = [
+  // 列定义只在语言/更新状态/回调变化时重建；输入与其它本地 state 不再让表格重新生成 columns。
+  const columns = useMemo(
+    () => [
     {
       title: t("mcp.name"),
       dataIndex: "name",
@@ -794,7 +835,9 @@ export function McpPage() {
         );
       },
     },
-  ];
+    ],
+    [t, targetLabel, updateStatuses, updating, handleUpdate, openEdit, handleDelete],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
@@ -860,31 +903,18 @@ export function McpPage() {
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t("mcp.registryDesc")}
           </Typography.Text>
-          <Space.Compact style={{ width: "100%" }}>
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onPressEnter={() => {
-                setCandidates([]);
-                setNextCursor(null);
-                void runSearch(null);
-              }}
-              placeholder={t("mcp.registrySearchPlaceholder")}
-              allowClear
-            />
-            <Button
-              type="primary"
-              icon={<SearchOutlined />}
-              loading={searching}
-              onClick={() => {
-                setCandidates([]);
-                setNextCursor(null);
-                void runSearch(null);
-              }}
-            >
-              {searching ? t("mcp.registrySearching") : t("mcp.registrySearch")}
-            </Button>
-          </Space.Compact>
+          <RegistrySearchBar
+            searching={searching}
+            onQueryChange={(value) => {
+              queryRef.current = value;
+            }}
+            onSubmit={(value) => {
+              queryRef.current = value;
+              setCandidates([]);
+              setNextCursor(null);
+              void runSearch(null);
+            }}
+          />
 
           <Space size={8} wrap>
             <Switch checked={localOnly} size="small" onChange={toggleLocalOnly} />
@@ -1144,7 +1174,7 @@ export function McpPage() {
       <Modal
         centered
         destroyOnHidden
-        mask={{ enabled: true, blur: true }}
+        mask={{ enabled: true }}
         width={560}
         open={open}
         title={editingId ? t("mcp.edit") : draft ? t("mcp.registryInstall") : t("mcp.manualAdd")}

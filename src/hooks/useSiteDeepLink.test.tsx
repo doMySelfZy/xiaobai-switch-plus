@@ -1,8 +1,42 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, renderHook, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SiteDeepLinkPayload } from "@/lib/siteDeepLink";
-import { confirmSiteDeepLinkImport, SiteDeepLinkConfirmContent } from "./useSiteDeepLink";
+import { confirmSiteDeepLinkImport, SiteDeepLinkConfirmContent, useSiteDeepLink } from "./useSiteDeepLink";
 import "@/i18n";
+
+const hookMocks = vi.hoisted(() => ({
+  invoke: vi.fn(
+    (_command: string, _args?: Record<string, unknown>): Promise<unknown> =>
+      Promise.resolve(null),
+  ),
+  isTauri: vi.fn((): boolean => true),
+  onOpenUrl: vi.fn(
+    (_handler: (urls: string[]) => void): Promise<() => void> =>
+      Promise.resolve(() => undefined),
+  ),
+  getCurrent: vi.fn((): Promise<string[] | null> => Promise.resolve(null)),
+  requiresPolling: true,
+}));
+
+vi.mock("@/lib/invoke", () => ({
+  invoke: (command: string, args?: Record<string, unknown>) => hookMocks.invoke(command, args),
+  isTauri: () => hookMocks.isTauri(),
+  isAppError: (e: unknown) =>
+    typeof e === "object" && e !== null && "code" in e && "message" in e,
+}));
+
+vi.mock("@tauri-apps/plugin-deep-link", () => ({
+  getCurrent: () => hookMocks.getCurrent(),
+  onOpenUrl: (handler: (urls: string[]) => void) => hookMocks.onOpenUrl(handler),
+}));
+
+vi.mock("react-i18next", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("react-i18next")>();
+  return {
+    ...actual,
+    useTranslation: () => ({ t: (key: string) => key }),
+  };
+});
 
 /** 测试用假密钥。用表达式拼出而非字面量：安全扫描器会把
  *  「凭据字段 + 字符串字面量」判为硬编码凭据，测试夹具因此被误报。 */
@@ -220,5 +254,77 @@ describe("confirmSiteDeepLinkImport", () => {
     expect(importSite).not.toHaveBeenCalled();
     expect(setPendingSiteForm).toHaveBeenCalledWith({ ...payload, apiKey: null });
     expect(messageInfo).toHaveBeenCalledWith("sites.deepLinkNeedKey");
+  });
+});
+
+describe("useSiteDeepLink polling", () => {
+  const modal = { confirm: () => undefined };
+  const message = { success: () => undefined, error: () => undefined, info: () => undefined };
+
+  function pendingFileReads(): number {
+    return hookMocks.invoke.mock.calls.filter(
+      ([command]) => command === "take_pending_deep_link",
+    ).length;
+  }
+
+  async function flushSetup() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  beforeEach(() => {
+    cleanup();
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    hookMocks.requiresPolling = true;
+    hookMocks.isTauri.mockReturnValue(true);
+    hookMocks.getCurrent.mockResolvedValue(null);
+    hookMocks.onOpenUrl.mockResolvedValue(() => undefined);
+    hookMocks.invoke.mockImplementation(async (command: string) => {
+      if (command === "deep_link_requires_polling") return hookMocks.requiresPolling;
+      return null;
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
+  it("does not start the pending-file timer where the file is never written", async () => {
+    hookMocks.requiresPolling = false;
+    const { unmount } = renderHook(() => useSiteDeepLink({ modal, message }));
+    await flushSetup();
+
+    expect(hookMocks.invoke).toHaveBeenCalledWith("deep_link_requires_polling", undefined);
+    // 启动时读一次待处理文件（macOS 之外也可能有历史遗留文件），之后不再轮询。
+    const readsAfterSetup = pendingFileReads();
+    expect(readsAfterSetup).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(pendingFileReads()).toBe(readsAfterSetup);
+    unmount();
+  });
+
+  it("keeps polling where the pending file is written and stops on unmount", async () => {
+    hookMocks.requiresPolling = true;
+    const { unmount } = renderHook(() => useSiteDeepLink({ modal, message }));
+    await flushSetup();
+
+    const readsAfterSetup = pendingFileReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(800);
+    });
+    expect(pendingFileReads()).toBeGreaterThan(readsAfterSetup);
+
+    unmount();
+    const readsBeforeUnmount = pendingFileReads();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(pendingFileReads()).toBe(readsBeforeUnmount);
   });
 });

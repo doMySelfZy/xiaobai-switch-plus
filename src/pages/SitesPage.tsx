@@ -34,6 +34,7 @@ import type { Site } from "@/types/domain";
 import { isAppError } from "@/lib/invoke";
 import { SITE_QUOTA_AUTO_REFRESH_MS, quotaCacheKey } from "@/lib/quotaProbe";
 import { useDeferredReady } from "@/hooks/useDeferredReady";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import { targetKindLabelKey, targetsAppliedForSite } from "@/components/apply/TargetStatusCard";
 
 function protocolLabelKey(protocol: Site["protocol"]): string {
@@ -48,7 +49,8 @@ export function SitesPage() {
   const modelsBySite = useSiteStore((s) => s.modelsBySite);
   const loading = useSiteStore((s) => s.loading);
   const hydrated = useSiteStore((s) => s.hydrated);
-  const fetchingModels = useSiteStore((s) => s.fetchingModels);
+  // per-site：某站点在拉模型时，只让它的刷新按钮转圈（全局布尔会让别的站点也转）。
+  const fetchingModelsBySite = useSiteStore((s) => s.fetchingModelsBySite);
   const loadSites = useSiteStore((s) => s.loadSites);
   const listModels = useSiteStore((s) => s.listModels);
   const fetchModels = useSiteStore((s) => s.fetchModels);
@@ -70,6 +72,9 @@ export function SitesPage() {
   const setApplyTab = useUIStore((s) => s.setApplyTab);
   const setApplyPrefillSiteId = useUIStore((s) => s.setApplyPrefillSiteId);
 
+  // KeepAlivePages 让本页常驻：只有"当前页正是站点页且窗口可见"才算真的在看。
+  const pageVisible = usePageVisible("sites");
+
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Site | null>(null);
   const [forceAdvancedOpen, setForceAdvancedOpen] = useState(false);
@@ -85,35 +90,26 @@ export function SitesPage() {
 
   // 列表额度摘要预取 + 自动刷新：probeQuota 自带 5 分钟 TTL + in-flight 去重，
   // 就是节流层，不要再包一层缓存。失败静默（错误态只在右侧详情展示）。依赖用
-  // 站点 id 串，避免对象引用变化导致重复触发。轮询只在页面可见时跑——窗口最小化
-  // 或应用在后台时不打请求；重新可见时立即补一次，避免展示陈旧金额。
+  // 站点 id 串，避免对象引用变化导致重复触发。
+  // 轮询只在「本页真正可见」时跑：KeepAlive 让页面常驻，只判 document.visibilityState
+  // 会在用户看别的页面时继续发请求。后台刷新一律不 force——TTL 该挡住就挡住；
+  // 只有手动刷新按钮（handleRefreshQuota）才 force。pageVisible 变真时补一次非强制刷新，
+  // 既覆盖"切回本页"，也覆盖"窗口重新可见"。
   const siteIdsKey = sites.map((s) => s.id).join(",");
   useEffect(() => {
-    if (!siteIdsKey) return;
-    const refreshAll = (force: boolean) => {
+    if (!pageVisible || !siteIdsKey) return;
+    const refreshAll = () => {
       for (const site of useSiteStore.getState().sites) {
         // 禁用的站点不探测：关掉它就是不希望再为它发请求。
         if (!site.enabled) continue;
         // 非强制刷新只传 siteId，保持与手动调用一致的签名（TTL 缓存会挡住重复请求）。
-        const run = force
-          ? probeQuota(site.id, { force: true })
-          : probeQuota(site.id);
-        void run.catch(() => undefined);
+        void probeQuota(site.id).catch(() => undefined);
       }
     };
-    if (document.visibilityState === "visible") refreshAll(false);
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") refreshAll(true);
-    }, SITE_QUOTA_AUTO_REFRESH_MS);
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") refreshAll(true);
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, [siteIdsKey, probeQuota]);
+    refreshAll();
+    const timer = window.setInterval(refreshAll, SITE_QUOTA_AUTO_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [siteIdsKey, probeQuota, pageVisible]);
 
   useEffect(() => {
     if (!pendingSiteForm) return;
@@ -162,12 +158,16 @@ export function SitesPage() {
     });
   }, [selectedSiteId, listModels, setSelectedModel]);
 
+  // 详情额度探测与窗口 focus 探测同样只在「本页真正可见」时发请求：页面常驻，
+  // 用户在别处时不该替这个页面打探测。回到本页时 pageVisible 变真、effect 重跑，
+  // 自然补一次（非 force，走 TTL）。
   useEffect(() => {
-    if (!selected?.id || !selected.hasKey) return;
+    if (!pageVisible || !selected?.id || !selected.hasKey) return;
     void probeQuota(selected.id).catch(() => {
       message.error(t("sites.quotaRefreshFailed"));
     });
   }, [
+    pageVisible,
     selected?.id,
     selected?.baseUrl,
     selected?.quotaRevision,
@@ -178,8 +178,9 @@ export function SitesPage() {
   ]);
 
   useEffect(() => {
-    if (!selected?.id || !selected.hasKey) return;
+    if (!pageVisible || !selected?.id || !selected.hasKey) return;
     const refreshOnFocus = () => {
+      // 回到窗口只补一次非强制刷新，不绕过 5 分钟 TTL。
       void probeQuota(selected.id).catch(() => {
         message.error(t("sites.quotaRefreshFailed"));
       });
@@ -187,6 +188,7 @@ export function SitesPage() {
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [
+    pageVisible,
     selected?.id,
     selected?.baseUrl,
     selected?.quotaRevision,
@@ -273,21 +275,48 @@ export function SitesPage() {
     }
   };
 
+  /**
+   * 启用 / 停用站点。
+   *
+   * 停用原先要先 `loadStatus({ force: true })` 才更新 UI——那会串行 spawn 4 个 CLI 进程
+   * 探测版本，开关看起来"点了没反应"。现在先乐观落库（updateSite 直接把新状态写回
+   * store），状态刷新扔后台且**不 force**（非 force 命中后端 60s CLI 探测缓存）。
+   * 确认弹窗用已有状态判断，不需要新探测：用户点「取消」就把乐观更新回滚，
+   * 语义与旧版一致——取消 = 不停用。
+   */
   const handleEnabledChange = async (site: Site, enabled: boolean) => {
-    if (enabled) {
+    try {
+      await updateSite(site.id, { enabled });
+    } catch (e) {
+      message.error(isAppError(e) ? e.message : String(e));
+      return;
+    }
+    if (enabled) return;
+
+    // 「取消」= 不停用：把乐观更新回滚回去。
+    const restoreEnabled = async () => {
       try {
         await updateSite(site.id, { enabled: true });
       } catch (e) {
         message.error(isAppError(e) ? e.message : String(e));
       }
-      return;
-    }
+    };
 
-    try {
-      await loadStatus({ force: true });
-    } catch (e) {
-      message.error(isAppError(e) ? e.message : String(e));
-      return;
+    // 后台补状态，不 force：只重读绑定表 + 命中后端 60s CLI 探测缓存。
+    const refreshStatuses = loadStatus({ background: true });
+    if (useApplyStore.getState().statusHydrated) {
+      void refreshStatuses.catch(() => undefined);
+    } else {
+      // 冷启动时状态还没读过：必须等这一次（非强制）刷新，
+      // 否则会把"已应用"误判成"没应用"而跳过确认弹窗。
+      try {
+        await refreshStatuses;
+      } catch (e) {
+        // 状态读不出来就无法判断是否正被使用：回滚乐观更新，保持旧语义（站点仍启用）。
+        await restoreEnabled();
+        message.error(isAppError(e) ? e.message : String(e));
+        return;
+      }
     }
 
     const targets = targetsAppliedForSite(useApplyStore.getState().statuses, site.id);
@@ -306,7 +335,14 @@ export function SitesPage() {
       content: t("sites.disableAppliedHint", { targets: targetLabels }),
       footer: (
         <div className="flex justify-end gap-2">
-          <Button onClick={() => dlg.destroy()}>{t("common.cancel")}</Button>
+          <Button
+            onClick={() => {
+              dlg.destroy();
+              void restoreEnabled();
+            }}
+          >
+            {t("common.cancel")}
+          </Button>
           <Button
             onClick={() => {
               dlg.destroy();
@@ -494,7 +530,7 @@ export function SitesPage() {
                     <Button
                       type="text"
                       size="small"
-                      loading={fetchingModels}
+                      loading={Boolean(selected && fetchingModelsBySite[selected.id])}
                       icon={<RefreshCw size={14} />}
                       onClick={() => void handleFetchModels(selected)}
                       aria-label={t("sites.fetchModels")}

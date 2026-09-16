@@ -233,6 +233,7 @@ pub fn run() {
             commands::get_site_proxy_headers,
             commands::check_app_update,
             commands::take_pending_deep_link,
+            commands::deep_link_requires_polling,
             commands::restore_main_window,
             commands::force_quit,
             commands::refresh_tray_menu,

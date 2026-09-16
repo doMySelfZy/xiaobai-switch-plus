@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, App, Button, Space, Switch, Table, Tag, Typography, theme } from "antd";
 import { InfoCircleOutlined, ReloadOutlined, VerticalAlignBottomOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
@@ -48,18 +48,69 @@ function maskBaseUrl(url: string, token: string): string {
   return url.replace(token, maskToken(token));
 }
 
+interface PortInputProps {
+  port: number;
+  label: string;
+  hint: string;
+  onCommit: (raw: string) => Promise<void>;
+}
+
+/**
+ * 端口输入自己持有草稿 state：击键只重渲染这一个输入框，
+ * 不会带着整页（含下方的请求日志表）重渲染。
+ */
+function PortInput({ port, label, hint, onCommit }: PortInputProps) {
+  const { token } = theme.useToken();
+  // null = 不在编辑中，显示服务端那份；失焦提交后清空草稿回落到服务端值。
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = async () => {
+    if (draft === null) return;
+    await onCommit(draft);
+    setDraft(null);
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-sm">{label}</span>
+      <input
+        className="w-24 rounded px-2 py-1 text-sm"
+        style={{
+          border: `1px solid ${token.colorBorder}`,
+          background: "transparent",
+          color: token.colorText,
+        }}
+        type="number"
+        min={1024}
+        max={65535}
+        value={draft ?? String(port)}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => void commit()}
+      />
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {hint}
+      </Typography.Text>
+    </div>
+  );
+}
+
 export function ProxyPage() {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const { message, modal } = App.useApp();
-  const { status, requests, loadStatus, loadRequests, start, stop, setTakeover, setPort, clearRequests } =
-    useProxyStore();
+  // 按字段订阅：日志轮询每 4 秒写入 requests，不该顺带重渲染标题/接管面板。
+  const status = useProxyStore((s) => s.status);
+  const requests = useProxyStore((s) => s.requests);
+  const loadStatus = useProxyStore((s) => s.loadStatus);
+  const loadRequests = useProxyStore((s) => s.loadRequests);
+  const start = useProxyStore((s) => s.start);
+  const stop = useProxyStore((s) => s.stop);
+  const setTakeover = useProxyStore((s) => s.setTakeover);
+  const setPort = useProxyStore((s) => s.setPort);
+  const clearRequests = useProxyStore((s) => s.clearRequests);
   const activePage = useUIStore((s) => s.activePage);
 
   const [busy, setBusy] = useState(false);
-
-  // 代理端口属于设置项；改端口会顺带重启监听并重写接管地址（后端命令负责）。
-  const [portDraft, setPortDraft] = useState<number | null>(null);
 
   useEffect(() => {
     void loadStatus();
@@ -124,19 +175,22 @@ export function ProxyPage() {
     [setTakeover, message, t],
   );
 
-  const applyPort = useCallback(async () => {
-    if (portDraft == null || !Number.isFinite(portDraft)) return;
-    const next = Math.min(65535, Math.max(1024, Math.round(portDraft)));
-    if (next === status?.port) return;
-    try {
-      await setPort(next);
-      message.success(t("proxy.portSaved"));
-      void loadStatus();
-    } catch (error) {
-      message.error(errorText(error));
-      setPortDraft(status?.port ?? null);
-    }
-  }, [portDraft, status?.port, setPort, message, t, loadStatus]);
+  const applyPort = useCallback(
+    async (raw: string) => {
+      const parsed = Number(raw);
+      if (raw.trim() === "" || !Number.isFinite(parsed)) return;
+      const next = Math.min(65535, Math.max(1024, Math.round(parsed)));
+      if (next === status?.port) return;
+      try {
+        await setPort(next);
+        message.success(t("proxy.portSaved"));
+        await loadStatus();
+      } catch (error) {
+        message.error(errorText(error));
+      }
+    },
+    [status?.port, setPort, message, t, loadStatus],
+  );
 
   const confirmDisableTakeoverAll = useCallback(() => {
     const active = (status?.targets ?? []).filter((item) => item.takeover);
@@ -156,7 +210,9 @@ export function ProxyPage() {
     });
   }, [status?.targets, modal, t, setTakeover, loadStatus]);
 
-  const columns = [
+  // 列定义只在语言变化时重建：轮询刷新日志不再让 Table 重新生成整套 columns。
+  const columns = useMemo(
+    () => [
     {
       title: t("proxy.colTime"),
       dataIndex: "at",
@@ -197,7 +253,9 @@ export function ProxyPage() {
       render: (value: string | null) =>
         value ? <Typography.Text type="danger">{value}</Typography.Text> : null,
     },
-  ];
+    ],
+    [t],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
@@ -232,7 +290,7 @@ export function ProxyPage() {
             <span>
               {t("proxy.address")}:{" "}
               <code>
-                {status?.address ?? `127.0.0.1:${portDraft ?? "—"}`}
+                {status?.address ?? `127.0.0.1:${status?.port ?? 18087}`}
               </code>
             </span>
             <span>
@@ -255,25 +313,12 @@ export function ProxyPage() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-sm">{t("proxy.port")}</span>
-            <input
-              className="w-24 rounded px-2 py-1 text-sm"
-              style={{ border: `1px solid ${token.colorBorder}`, background: "transparent", color: token.colorText }}
-              type="number"
-              min={1024}
-              max={65535}
-              value={portDraft ?? status?.port ?? 18087}
-              onChange={(e) => {
-                const raw = e.target.value;
-                setPortDraft(raw === "" ? null : Number(raw));
-              }}
-              onBlur={() => void applyPort()}
-            />
-            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-              {t("proxy.portHint")}
-            </Typography.Text>
-          </div>
+          <PortInput
+            port={status?.port ?? 18087}
+            label={t("proxy.port")}
+            hint={t("proxy.portHint")}
+            onCommit={applyPort}
+          />
 
           {status?.lastError && (
             <Alert type="error" showIcon message={t("proxy.lastError")} description={status.lastError} />
