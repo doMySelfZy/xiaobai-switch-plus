@@ -129,7 +129,7 @@ export function SiteApiKeyManageModal({ open, site, onClose }: Props) {
       open={open}
       centered
       destroyOnHidden
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
       width={560}
       title={t("sites.manageKeys")}
       onCancel={onClose}

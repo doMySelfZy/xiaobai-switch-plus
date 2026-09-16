@@ -127,7 +127,7 @@ export function WebDavConfigModal({
       title={t("settings.webdav.configTitle")}
       centered
       destroyOnHidden
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
       width={520}
       okText={t("settings.save")}
       cancelText={t("common.cancel")}

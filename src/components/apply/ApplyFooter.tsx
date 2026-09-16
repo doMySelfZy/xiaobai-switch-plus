@@ -117,7 +117,7 @@ export function ApplyFooter({ loading, disabled, target, onApply, onRestoreOffic
         open={backupOpen}
         centered
         destroyOnHidden
-        mask={{ enabled: true, blur: true }}
+        mask={{ enabled: true }}
         width={560}
         title={t("apply.backupRecords")}
         footer={null}

@@ -48,7 +48,7 @@ export function LocalBackupConfigModal({
       title={t("settings.backupCenter.localSettings")}
       centered
       destroyOnHidden
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
       width={520}
       okText={t("settings.save")}
       cancelText={t("common.cancel")}

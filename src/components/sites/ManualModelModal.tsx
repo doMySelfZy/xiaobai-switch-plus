@@ -46,7 +46,7 @@ export function ManualModelModal({ open, site, onClose }: Props) {
       width={520}
       destroyOnHidden
       centered
-      mask={{ enabled: true, blur: true }}
+      mask={{ enabled: true }}
     >
       <Form form={form} layout="vertical" className="mt-2" requiredMark="optional">
         <Form.Item

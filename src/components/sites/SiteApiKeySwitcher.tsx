@@ -146,7 +146,7 @@ export function SiteApiKeySwitcher({ site }: Props) {
         centered
         closable
         destroyOnHidden
-        mask={{ enabled: true, blur: true }}
+        mask={{ enabled: true }}
         width={560}
         title={
           <span className="inline-flex items-center gap-2">
