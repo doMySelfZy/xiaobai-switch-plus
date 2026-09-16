@@ -95,6 +95,35 @@ cd /e/xiaobai-switch && pnpm typecheck && pnpm test:run
 - `pnpm test:run`：407 passed / 0 failed；2 个文件仍是本机既有的收集期 SyntaxError
 - `pnpm typecheck`：0 错误
 
+## 代码评审后的额外修复（2026-09-16）
+
+在主任务复核完成后，代码评审发现了几个性能问题，已额外修复并提交：
+
+1. **站点配额轮询优化** (commit b111f81)
+   - 问题：配额刷新间隔 10s 过于频繁，所有站点都轮询
+   - 修复：延长到 30s，只轮询当前选中站点；非站点页时不发请求
+   - 文件：`src/pages/SitesPage.tsx`
+
+2. **MCP Discovery 并发控制** (commit 8c0c5ea)
+   - 问题：12 个搜索词并发请求可能压垮 npm registry
+   - 修复：限制并发数到 3（使用 `buffer_unordered`）
+   - 文件：`src-tauri/src/commands/mcp.rs`
+
+3. **模型探测超时降低** (commit 8aba6cb)
+   - 问题：单个协议探测失败需要等待 10s，站点协议检测过慢
+   - 修复：HTTP 客户端超时从 10s 降低到 5s
+   - 文件：`src-tauri/src/models_fetch/mod.rs`
+
+4. **Apply 备份剪枝批量处理** (commit 25b0201)
+   - 问题：多目标应用时每个目标都扫描一次备份目录
+   - 修复：收集需要剪枝的目标，所有应用完成后批量剪枝
+   - 文件：`src-tauri/src/commands/apply.rs`
+
+5. **签名适配** (commit 60812d7)
+   - 文件：`src-tauri/src/key_switch.rs`, `src-tauri/src/route_switch.rs`
+
+测试验证：cargo test (554 passed), pnpm test:run (406 passed), typecheck ✓
+
 ## 复核提出但未处理（留给后续）
 
 1. `TitleBar.tsx` 拖动已按 Tauri 官方形状实现，但"双击是否被拖动吞掉"已由本次真机测试证明没问题；保留现状。
