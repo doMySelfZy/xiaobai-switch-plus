@@ -784,7 +784,7 @@ describe("SitesPage", () => {
     probe.mockRestore();
   });
 
-  it("prefetches quota for every site once when the page mounts", async () => {
+  it("prefetches quota for selected site when the page mounts", async () => {
     await act(async () => {
       await useSiteStore.getState().createSite({
         name: "Alpha",
@@ -805,16 +805,18 @@ describe("SitesPage", () => {
       </Wrapper>,
     );
 
+    // 优化后只探测选中的站点（自动选中第一个），而不是全部站点
     await waitFor(() => {
-      expect(getBrowserQuotaProbeCallCount()).toBe(2);
+      expect(getBrowserQuotaProbeCallCount()).toBe(1);
     });
     // Flush one more microtask turn so any late duplicate request would land
     // before the count is asserted again.
     await act(async () => {});
-    expect(getBrowserQuotaProbeCallCount()).toBe(2);
-    for (const id of useSiteStore.getState().sites.map((s) => s.id)) {
-      expect(probe).toHaveBeenCalledWith(id);
-    }
+    expect(getBrowserQuotaProbeCallCount()).toBe(1);
+    // 应该只探测选中的站点（第一个）
+    const selectedId = useUIStore.getState().selectedSiteId;
+    expect(selectedId).toBeTruthy();
+    expect(probe).toHaveBeenCalledWith(selectedId);
     probe.mockRestore();
   });
 

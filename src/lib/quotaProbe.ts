@@ -4,8 +4,8 @@ import type { Site, SiteQuota } from "@/types/domain";
 
 export const QUOTA_TTL_MS = 5 * 60 * 1000;
 
-/** 列表额度摘要的自动刷新间隔（仅页面可见时轮询）。 */
-export const SITE_QUOTA_AUTO_REFRESH_MS = 2 * 60 * 1000;
+/** 列表额度摘要的自动刷新间隔（仅页面可见时轮询，只轮询当前选中站点以降低噪音）。 */
+export const SITE_QUOTA_AUTO_REFRESH_MS = 30 * 1000;
 
 export async function probeSiteQuota(siteId: string): Promise<SiteQuota> {
   return invoke<SiteQuota>("probe_site_quota", { siteId });

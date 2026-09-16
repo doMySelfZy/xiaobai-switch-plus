@@ -95,21 +95,23 @@ export function SitesPage() {
   // 会在用户看别的页面时继续发请求。后台刷新一律不 force——TTL 该挡住就挡住；
   // 只有手动刷新按钮（handleRefreshQuota）才 force。pageVisible 变真时补一次非强制刷新，
   // 既覆盖"切回本页"，也覆盖"窗口重新可见"。
-  const siteIdsKey = sites.map((s) => s.id).join(",");
+  // 优化：间隔从 2 分钟降至 30 秒，且只轮询当前选中的站点以降低网络噪音。
   useEffect(() => {
-    if (!pageVisible || !siteIdsKey) return;
-    const refreshAll = () => {
-      for (const site of useSiteStore.getState().sites) {
-        // 禁用的站点不探测：关掉它就是不希望再为它发请求。
-        if (!site.enabled) continue;
-        // 非强制刷新只传 siteId，保持与手动调用一致的签名（TTL 缓存会挡住重复请求）。
-        void probeQuota(site.id).catch(() => undefined);
+    if (!pageVisible || !selectedSiteId) return;
+    const selected = useSiteStore.getState().sites.find((s) => s.id === selectedSiteId);
+    if (!selected?.enabled) return;
+
+    const refresh = () => {
+      const current = useSiteStore.getState().sites.find((s) => s.id === selectedSiteId);
+      if (current?.enabled) {
+        void probeQuota(selectedSiteId).catch(() => undefined);
       }
     };
-    refreshAll();
-    const timer = window.setInterval(refreshAll, SITE_QUOTA_AUTO_REFRESH_MS);
+
+    refresh();
+    const timer = window.setInterval(refresh, SITE_QUOTA_AUTO_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [siteIdsKey, probeQuota, pageVisible]);
+  }, [selectedSiteId, probeQuota, pageVisible]);
 
   useEffect(() => {
     if (!pendingSiteForm) return;
