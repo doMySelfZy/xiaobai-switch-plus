@@ -197,6 +197,7 @@ pub fn apply_site(
 
     let applied_at = Utc::now().timestamp_millis();
     let mut results = Vec::new();
+    let mut targets_to_prune = std::collections::HashSet::new();
 
     for target in targets {
         let _lock = try_lock_target(target.as_str())?;
@@ -297,6 +298,7 @@ pub fn apply_site(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
             continue;
         }
@@ -386,6 +388,7 @@ pub fn apply_site(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
             continue;
         }
@@ -492,6 +495,7 @@ pub fn apply_site(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
             continue;
         }
@@ -583,6 +587,7 @@ pub fn apply_site(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
             continue;
         }
@@ -673,7 +678,13 @@ pub fn apply_site(
             None,
             applied_at,
             settings.max_backup_copies,
+            &mut targets_to_prune,
         );
+    }
+
+    // 批量剪枝：所有目标应用完成后，对每个目标只扫描一次备份目录
+    for target in targets_to_prune {
+        let _ = backup::prune_target_backups(target, settings.max_backup_copies);
     }
 
     let result = ApplyResult {
@@ -694,6 +705,7 @@ pub(crate) fn finalize_backup_dir(
     apply_record_id: Option<&str>,
     created_at: i64,
     max_copies: u32,
+    targets_to_prune: &mut std::collections::HashSet<TargetKind>,
 ) {
     let files = backup::payload_files(backup_root);
     if files.is_empty() {
@@ -729,7 +741,8 @@ pub(crate) fn finalize_backup_dir(
         };
         let _ = backup::write_meta(backup_root, &meta);
     }
-    let _ = backup::prune_target_backups(target, max_copies);
+    // 收集需要剪枝的目标，避免在循环中重复扫描备份目录
+    targets_to_prune.insert(target);
 }
 
 /// 见 `apply_site`：改目标配置文件 + 备份清理，必须离开 IPC 线程。
@@ -745,6 +758,8 @@ pub fn revert_target(
         .db
         .with_conn(|c| repo::binding::get_binding(c, target))?
         .ok_or_else(|| AppError::new("not_found", "no binding to revert"))?;
+
+    let mut targets_to_prune: std::collections::HashSet<TargetKind> = std::collections::HashSet::new();
 
     match target {
         TargetKind::ClaudeCode => {
@@ -812,6 +827,8 @@ pub fn restore_official_target(
         None => ("official", "official"),
     };
 
+    let mut targets_to_prune = std::collections::HashSet::new();
+
     let result = match target {
         TargetKind::ClaudeCode => crate::adapters::claude_code::restore_official(
             settings.claude_home_override.as_deref(),
@@ -863,7 +880,12 @@ pub fn restore_official_target(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
+            // revert_target 只处理一个目标，立即剪枝
+            for t in targets_to_prune {
+                let _ = backup::prune_target_backups(t, settings.max_backup_copies);
+            }
             crate::tray::request_tray_menu_sync(&app);
             Ok(())
         }
@@ -876,7 +898,12 @@ pub fn restore_official_target(
                 None,
                 applied_at,
                 settings.max_backup_copies,
+                &mut targets_to_prune,
             );
+            // 失败时也剪枝
+            for t in targets_to_prune {
+                let _ = backup::prune_target_backups(t, settings.max_backup_copies);
+            }
             Err(e)
         }
     }
