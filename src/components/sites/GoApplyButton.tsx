@@ -5,6 +5,7 @@ import Codex from "@lobehub/icons/es/Codex";
 import Pi from "@lobehub/icons/es/Pi";
 import { SquareTerminal, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { usePageVisible } from "@/hooks/usePageVisible";
 import type { ApplyTargetTab } from "@/stores";
 
 const CYCLE_MS = 3000;
@@ -40,24 +41,39 @@ export function GoApplyButton({ disabled, onApply }: Props) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<ApplyTargetTab>("claude_code");
   const [leaving, setLeaving] = useState(false);
+  /**
+   * SitesPage 被 KeepAlivePages 常驻（display:none），站点页不在前台时这个 3 秒轮换
+   * 定时器仍会跑，每次 setState 都会重渲染按钮。只在本页真正可见时才转。
+   */
+  const visible = usePageVisible("sites");
 
   useEffect(() => {
+    if (!visible) {
+      // 隐藏时归位：否则中途隐藏会把文字停在淡出状态，切回来是空的。
+      setLeaving(false);
+      return;
+    }
     const reduce =
       typeof window !== "undefined" &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let fadeTimer: number | null = null;
     const id = window.setInterval(() => {
       if (reduce) {
         setTab(nextTab);
         return;
       }
       setLeaving(true);
-      window.setTimeout(() => {
+      fadeTimer = window.setTimeout(() => {
+        fadeTimer = null;
         setTab(nextTab);
         setLeaving(false);
       }, FADE_MS);
     }, CYCLE_MS);
-    return () => window.clearInterval(id);
-  }, []);
+    return () => {
+      window.clearInterval(id);
+      if (fadeTimer !== null) window.clearTimeout(fadeTimer);
+    };
+  }, [visible]);
 
   const label = t(TAB_LABEL_KEYS[tab]);
   const icon = TAB_ICONS[tab];

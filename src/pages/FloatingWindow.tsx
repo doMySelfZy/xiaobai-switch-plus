@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import {
-  getCurrentWindow,
-  LogicalSize,
-  PhysicalPosition,
-} from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@/lib/invoke";
 import type { AppSettings, SiteQuotaSummary } from "@/types/domain";
@@ -63,6 +59,16 @@ const ORB_SIZE = 56;
 /** 位移超过这个像素数就算拖动、不算点击。 */
 const DRAG_THRESHOLD = 4;
 
+/**
+ * 停止移动多久之后把窗口位置落盘。
+ *
+ * 拖动期间不能写库（每帧一次会打满数据库）；而系统拖动并没有一个可靠的「结束」
+ * 回调——Windows 上 tao 是在 WM_EXITSIZEMOVE 里补发一个 WM_LBUTTONUP
+ * （tao-0.35.3/src/platform_impl/windows/event_loop.rs:1038），别的平台不一定有。
+ * 所以以「窗口不再移动」为准：最后一次 move 事件之后再等这么久才写一次。
+ */
+const POSITION_SAVE_DEBOUNCE_MS = 400;
+
 /** 余额低（但不为 0）时用警示色；无限额或未知不提示。 */
 function isLowBalance(quota: SiteQuotaSummary["quota"]): boolean {
   return (
@@ -120,7 +126,14 @@ interface FloatingPrefs {
 export const FloatingWindow: React.FC = () => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
-  const appWindow = getCurrentWindow();
+  /**
+   * 窗口句柄要固定一份。
+   *
+   * `getCurrentWindow()` 每次调用都返回一个新的包装对象；在渲染期直接调用会让
+   * `applyCollapsed` / 拖动监听这些以它为依赖的 effect 每次渲染都重挂，
+   * 拖动过程中重挂监听会丢事件。窗口本身不会变，用 `useMemo(…, [])` 固定。
+   */
+  const appWindow = useMemo(() => getCurrentWindow(), []);
   const { message } = App.useApp();
   const [sites, setSites] = useState<SiteQuotaSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,26 +144,64 @@ export const FloatingWindow: React.FC = () => {
   /**
    * 拖动状态。
    *
-   * 坐标必须统一：`outerPosition()` 给的是**物理**像素，而鼠标事件是 **CSS** 像素，
-   * 两者相差一个 devicePixelRatio。之前把「物理位置 + CSS 位移」当成逻辑坐标交给
-   * setPosition，在 175% 缩放下窗口会以 1.75 倍速乱飞 —— 表现就是"拖不动"。
-   * 现在统一换算到物理像素再用 PhysicalPosition。
+   * 位置移动本身已经交给系统（`startDragging`）——以前在 `mousemove` 里
+   * `setPosition` 是「JS→Rust→SetWindowPos」的每帧往返，而且目标位置由
+   * 「按下原点 + 窗口相对位移」推导：窗口一移动，下一个事件的 `clientX` 就变小，
+   * 形成反馈环，窗口永远追不上光标；光标移出窗口后 `mousemove` 也不再触发，
+   * 拖动直接冻结。这里只保留两件必须由 JS 判断的事：越过阈值（算不算拖动）
+   * 与拖完抑制点击。
    */
-  const drag = useRef<{
-    mouseX: number;
-    mouseY: number;
-    winX: number;
-    winY: number;
-    moved: boolean;
-  } | null>(null);
-  const pendingPosition = useRef<{ x: number; y: number } | null>(null);
+  const drag = useRef<{ mouseX: number; mouseY: number; moved: boolean } | null>(null);
   /**
    * 「刚刚拖动过」标志。
    *
    * 不能靠 `drag.current.moved` 在 click 里判断——mouseup 已经把它清空了，
-   * 拖动之后 click 仍会触发，于是拖完窗口就自己收起/展开了。
+   * 拖动之后 click 仍会触发，于是拖完窗口就自己收起/展开了。拖动一开始就立起来
+   * （系统拖动期间可能收不到 mouseup，等 mouseup 再立就晚了），由
+   * `suppressClickAfterDrag` 在 mouseup 时收尾。
    */
   const draggedRecently = useRef(false);
+  /** 拖动结束后抑制 click 的兜底定时器，避免标志永久卡住。 */
+  const dragClickTimer = useRef<number | null>(null);
+  /** 已经落盘的位置：同一次拖动只写一次，也避免「没动也写库」。 */
+  const lastSavedPosition = useRef<{ x: number; y: number } | null>(null);
+  const positionSaveTimer = useRef<number | null>(null);
+
+  /** 拖动结束：抑制紧随其后的 click。click 与 mouseup 在同一个任务里派发，0ms 足够。 */
+  const suppressClickAfterDrag = useCallback(() => {
+    draggedRecently.current = true;
+    if (dragClickTimer.current !== null) window.clearTimeout(dragClickTimer.current);
+    dragClickTimer.current = window.setTimeout(() => {
+      draggedRecently.current = false;
+      dragClickTimer.current = null;
+    }, 0);
+  }, []);
+
+  /** 把窗口当前的真实位置落盘（位置变了才写）。 */
+  const persistPosition = useCallback(
+    async (x: number, y: number) => {
+      if (lastSavedPosition.current?.x === x && lastSavedPosition.current?.y === y) return;
+      lastSavedPosition.current = { x, y };
+      try {
+        await invoke("save_floating_window_position", { x, y });
+      } catch (error) {
+        console.error("Failed to save position:", error);
+      }
+    },
+    [],
+  );
+
+  /** 拖动/移动停止后再落盘：拖动过程中不写库。 */
+  const schedulePositionSave = useCallback(
+    (x: number, y: number) => {
+      if (positionSaveTimer.current !== null) window.clearTimeout(positionSaveTimer.current);
+      positionSaveTimer.current = window.setTimeout(() => {
+        positionSaveTimer.current = null;
+        void persistPosition(x, y);
+      }, POSITION_SAVE_DEBOUNCE_MS);
+    },
+    [persistPosition],
+  );
 
   /** 拉最新余额：后端并发探测所有站点并更新缓存，返回汇总。 */
   const refreshQuotas = useCallback(
@@ -270,58 +321,56 @@ export const FloatingWindow: React.FC = () => {
     [applyCollapsed],
   );
 
-  /** 小球与标题栏共用的拖动：按下记录起点，移动超过阈值才算拖动。 */
-  const beginDrag = useCallback(
-    async (event: React.MouseEvent) => {
-      if (event.button !== 0) return;
-      if (event.target instanceof HTMLElement && event.target.closest("button")) return;
-      try {
-        const pos = await appWindow.outerPosition();
-        drag.current = {
-          mouseX: event.clientX,
-          mouseY: event.clientY,
-          winX: pos.x,
-          winY: pos.y,
-          moved: false,
-        };
-      } catch (error) {
-        console.error("Failed to read window position:", error);
-      }
-    },
-    [appWindow],
-  );
+  /** 小球与标题栏共用的拖动：按下记录起点，移动超过阈值就交给系统拖动。 */
+  const beginDrag = useCallback((event: React.MouseEvent) => {
+    if (event.button !== 0) return;
+    if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+    drag.current = {
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+      moved: false,
+    };
+  }, []);
 
+  // 拖动：只在越过阈值那一刻交给系统，之后不再自己算位置。
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const origin = drag.current;
-      if (!origin) return;
-      const scale = window.devicePixelRatio || 1;
-      const dx = (event.clientX - origin.mouseX) * scale;
-      const dy = (event.clientY - origin.mouseY) * scale;
-      if (!origin.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD * scale) return;
+      if (!origin || origin.moved) return;
+      // 这里只判断「算不算拖动」，不做坐标换算：位置交给系统，鼠标事件只用 CSS 像素。
+      const dx = event.clientX - origin.mouseX;
+      const dy = event.clientY - origin.mouseY;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
       origin.moved = true;
-      const x = Math.round(origin.winX + dx);
-      const y = Math.round(origin.winY + dy);
-      pendingPosition.current = { x, y };
-      void appWindow.setPosition(new PhysicalPosition(x, y));
+      // 先立起抑制标志：拖完紧跟的 click 不能触发展开/收起。
+      draggedRecently.current = true;
+      // 交给系统拖动（wry/tao 走的是窗口的非客户区拖动），跟手、能拖出屏幕外，
+      // 也不再需要每次 mousemove 一次 IPC。
+      void appWindow.startDragging().catch((error) => {
+        console.error("Failed to start window dragging:", error);
+        draggedRecently.current = false;
+      });
     };
 
     const onUp = () => {
       const origin = drag.current;
       if (!origin) return;
       drag.current = null;
-      const pending = pendingPosition.current;
-      pendingPosition.current = null;
-      if (!origin.moved || !pending) return;
-      // 拖动后紧跟的 click 要忽略掉，否则拖完就自己收起/展开。
-      draggedRecently.current = true;
-      window.setTimeout(() => {
-        draggedRecently.current = false;
-      }, 0);
-      // 拖动结束才写库：拖动过程中每一帧都写会打满数据库。
-      void invoke("save_floating_window_position", pending).catch((error) => {
-        console.error("Failed to save position:", error);
-      });
+      if (!origin.moved) return;
+      // 拖动结束：抑制紧随其后的 click，并把最终位置落盘。
+      suppressClickAfterDrag();
+      // mouseup 读到的是权威位置，撤掉 move 事件的防抖落盘，避免它稍后用略旧的坐标覆盖。
+      if (positionSaveTimer.current !== null) {
+        window.clearTimeout(positionSaveTimer.current);
+        positionSaveTimer.current = null;
+      }
+      void appWindow
+        .outerPosition()
+        .then((pos) => persistPosition(pos.x, pos.y))
+        .catch((error) => {
+          // 位置读不到就交给 move 事件的防抖落盘兜底，不打断交互。
+          console.error("Failed to read window position after drag:", error);
+        });
     };
 
     document.addEventListener("mousemove", onMove);
@@ -330,11 +379,49 @@ export const FloatingWindow: React.FC = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     };
-  }, [appWindow]);
+  }, [appWindow, persistPosition, suppressClickAfterDrag]);
+
+  /**
+   * 位置落盘的兜底通道。
+   *
+   * 系统拖动期间窗口每次移动都会发 `tauri://move`，用「最后一次移动 + 防抖」
+   * 当作拖动结束——不依赖 mouseup（见 POSITION_SAVE_DEBOUNCE_MS 的说明）。
+   * Windows 上 mouseup 通常会先到并即时落盘，这里随后再跑一次会被位置去重挡掉。
+   */
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void appWindow
+      .onMoved(({ payload }) => {
+        schedulePositionSave(payload.x, payload.y);
+      })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch((error) => console.error("Failed to listen for window moves:", error));
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [appWindow, schedulePositionSave]);
+
+  // 组件卸载时清掉未落盘的定时器，避免卸载后还写库。
+  useEffect(
+    () => () => {
+      if (positionSaveTimer.current !== null) window.clearTimeout(positionSaveTimer.current);
+      if (dragClickTimer.current !== null) window.clearTimeout(dragClickTimer.current);
+    },
+    [],
+  );
 
   /** 点击（而非拖动）时切换展开/收起。 */
   const handleOrbClick = () => {
-    if (draggedRecently.current) return;
+    if (draggedRecently.current) {
+      // 拖动后的那次 click：吞掉并复位，防止标志卡住让小球再也点不动。
+      draggedRecently.current = false;
+      return;
+    }
     void persistCollapsed(!collapsed);
   };
 
@@ -359,14 +446,12 @@ export const FloatingWindow: React.FC = () => {
           lowCount > 0 ? token.colorWarning : token.colorPrimary,
           0.9,
         ),
-        backdropFilter: "blur(20px) saturate(1.6)",
-        WebkitBackdropFilter: "blur(20px) saturate(1.6)",
         borderRadius: "50%",
         border: `1px solid ${withAlpha(token.colorBorderSecondary, 0.6)}`,
         cursor: "pointer",
         boxShadow: "0 4px 16px rgba(0, 0, 0, 0.28)",
       }}
-      onMouseDown={(event) => void beginDrag(event)}
+      onMouseDown={beginDrag}
       onClick={handleOrbClick}
       role="button"
       tabIndex={0}
@@ -393,8 +478,6 @@ export const FloatingWindow: React.FC = () => {
           className="flex h-full w-full flex-col"
           style={{
             background: withAlpha(token.colorBgElevated, 0.72),
-            backdropFilter: "blur(24px) saturate(1.6)",
-            WebkitBackdropFilter: "blur(24px) saturate(1.6)",
             borderRadius: 14,
             overflow: "hidden",
             border: `1px solid ${withAlpha(token.colorBorderSecondary, 0.7)}`,
@@ -409,7 +492,7 @@ export const FloatingWindow: React.FC = () => {
               borderColor: withAlpha(token.colorBorderSecondary, 0.6),
               cursor: "move",
             }}
-            onMouseDown={(event) => void beginDrag(event)}
+            onMouseDown={beginDrag}
             onClick={handleOrbClick}
             title={t("settings.floatingWindowCollapse")}
           >

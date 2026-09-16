@@ -232,7 +232,8 @@ export default function App() {
       modal={{
         centered: true,
         styles: {
-          mask: { backdropFilter: "blur(4px)" },
+          // 遮罩不要 backdrop-filter：它会对整个窗口做一次模糊合成，在 175%
+          // 缩放 + 大列表页上明显掉帧。半透明底色（rgba）已经足够把弹窗压下去。
           container: {
             maxHeight: "calc(100vh - 32px)",
             display: "flex",

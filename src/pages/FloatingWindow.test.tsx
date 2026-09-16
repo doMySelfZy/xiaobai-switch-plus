@@ -28,12 +28,16 @@ describe("withAlpha", () => {
 const setSize = vi.fn().mockResolvedValue(undefined);
 const setPosition = vi.fn().mockResolvedValue(undefined);
 const outerPosition = vi.fn().mockResolvedValue({ x: 100, y: 100 });
+const startDragging = vi.fn().mockResolvedValue(undefined);
+const onMoved = vi.fn().mockResolvedValue(() => undefined);
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     setSize,
     setPosition,
     outerPosition,
+    startDragging,
+    onMoved,
   }),
   LogicalPosition: class {
     constructor(
@@ -94,6 +98,8 @@ describe("FloatingWindow", () => {
     setPosition.mockClear();
     outerPosition.mockClear();
     outerPosition.mockResolvedValue({ x: 100, y: 100 });
+    startDragging.mockClear();
+    onMoved.mockClear();
     Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
   });
 
@@ -175,9 +181,10 @@ describe("FloatingWindow", () => {
     });
   });
 
-  it("drags the window with physical-pixel math", async () => {
-    // 回归：之前把「物理位置 + CSS 位移」当逻辑坐标交给 setPosition，
-    // 在高 DPI 下窗口会以缩放倍数乱飞，表现就是拖不动。这里锁住换算。
+  it("hands the drag over to the system once the pointer passes the threshold", async () => {
+    // 回归：之前在 mousemove 里自己 setPosition，既每帧一次 IPC，又用
+    // 「按下原点 + 窗口相对位移」推导目标位置（反馈环，窗口追不上光标）。
+    // 现在只判断「算不算拖动」，然后交给系统拖动一次。
     render(
       <Wrapper>
         <FloatingWindow />
@@ -185,17 +192,73 @@ describe("FloatingWindow", () => {
     );
 
     const header = await screen.findByTestId("floating-header");
-    outerPosition.mockResolvedValue({ x: 1000, y: 500 });
-    Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });
 
     fireEvent.mouseDown(header, { button: 0, clientX: 10, clientY: 10 });
-    await waitFor(() => expect(outerPosition).toHaveBeenCalled());
+    // 阈值（4px）以内不算拖动。
+    fireEvent.mouseMove(document, { clientX: 12, clientY: 12 });
+    expect(startDragging).not.toHaveBeenCalled();
+
+    // 越过阈值：交给系统，且不再自己算位置。
     fireEvent.mouseMove(document, { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1));
+    expect(setPosition).not.toHaveBeenCalled();
+
+    // 后续移动不再重复调用；系统拖动期间 mousemove 可能根本收不到。
+    fireEvent.mouseMove(document, { clientX: 120, clientY: 90 });
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(setPosition).not.toHaveBeenCalled();
+  });
+
+  it("persists the window position read after the drag, not the mouse delta", async () => {
+    // 系统拖动期间拿不到鼠标坐标，落盘必须读窗口的真实位置（outerPosition）。
+    const invoke = await invokeMock();
+    render(
+      <Wrapper>
+        <FloatingWindow />
+      </Wrapper>,
+    );
+
+    const header = await screen.findByTestId("floating-header");
+    outerPosition.mockResolvedValue({ x: 1234, y: 567 });
+
+    fireEvent.mouseDown(header, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(document, { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1));
+
     fireEvent.mouseUp(document);
 
-    // CSS 位移 (30, 20) × dpr 2 = 物理 (60, 40)，叠加起点 (1000, 500)。
     await waitFor(() => {
-      expect(setPosition).toHaveBeenCalledWith(expect.objectContaining({ x: 1060, y: 540 }));
+      expect(invoke).toHaveBeenCalledWith("save_floating_window_position", {
+        x: 1234,
+        y: 567,
+      });
+    });
+  });
+
+  it("does not collapse when a click follows the drag", async () => {
+    // 拖动之后 click 仍会触发：不抑制的话拖完窗口就自己收起了。
+    render(
+      <Wrapper>
+        <FloatingWindow />
+      </Wrapper>,
+    );
+
+    const header = await screen.findByTestId("floating-header");
+    expect(await screen.findByText("Relay A")).toBeInTheDocument();
+
+    fireEvent.mouseDown(header, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(document, { clientX: 40, clientY: 30 });
+    await waitFor(() => expect(startDragging).toHaveBeenCalledTimes(1));
+    fireEvent.mouseUp(document);
+    fireEvent.click(header);
+
+    expect(screen.getByText("Relay A")).toBeInTheDocument();
+
+    // 抑制标志必须复位：下一次点击仍能正常收起。
+    await new Promise((resolve) => window.setTimeout(resolve, 5));
+    fireEvent.click(header);
+    await waitFor(() => {
+      expect(screen.queryByText("Relay A")).toBeNull();
     });
   });
 
@@ -321,7 +384,7 @@ describe("FloatingWindow", () => {
     expect(cell.getByText("不可用")).toBeInTheDocument();
   });
 
-  it("keeps the glass background translucent", async () => {
+  it("keeps the panel translucent without paying for a backdrop blur", async () => {
     render(
       <Wrapper>
         <FloatingWindow />
@@ -332,11 +395,16 @@ describe("FloatingWindow", () => {
       expect(screen.getByText("Relay A")).toBeInTheDocument();
     });
 
-    // 背景必须带透明度且启用 backdrop-filter：任一丢了毛玻璃就看不见。
-    // （窗口侧还需 Rust 建窗时 transparent(true)，那部分在 floating_window.rs 的测试里。）
+    // 窗口是 transparent，背后没有页面内容可采样：backdrop-filter 是白付的合成开销，
+    // 已经去掉。底色必须仍然半透明，否则悬浮窗会变成一块实心板。
+    // （窗口侧 transparent(true) 那部分在 floating_window.rs 的测试里。）
     const root = screen.getByTestId("floating-panel");
     const style = root.style;
-    expect(style.backdropFilter).toContain("blur(");
+    expect(style.backdropFilter).toBeFalsy();
+    // Webkit 前缀版本不在 DOM 类型里，单独取一下，别让它悄悄回来。
+    expect(
+      (style as CSSStyleDeclaration & { webkitBackdropFilter?: string }).webkitBackdropFilter,
+    ).toBeFalsy();
     const bg = style.background;
     const alpha = Number(/rgba\([^)]*,\s*([\d.]+)\)/.exec(bg)?.[1] ?? "1");
     expect(alpha).toBeGreaterThan(0);

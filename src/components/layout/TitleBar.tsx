@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Dropdown, theme, Tooltip } from "antd";
 import type { MenuProps } from "antd";
 import { ArrowDownCircle, Github, Globe, Loader2, Minus, Moon, Monitor, Pin, PinOff, Settings, Square, Sun, X, XCircle } from "lucide-react";
@@ -46,7 +46,6 @@ export function TitleBar() {
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const [pinned, setPinned] = useState(alwaysOnTop);
   const [isMaximized, setIsMaximized] = useState(false);
-  const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isInSettings = activePage === "settings";
   const { checkForUpdate } = useUpdateChecker();
   const checkingUpdate = useUpdateCheckBusy();
@@ -87,6 +86,27 @@ export function TitleBar() {
     }
   }, [pinned, saveSettings]);
 
+  /**
+   * 拖动：按下即交给系统，不再等 200ms。
+   *
+   * 之前 Windows 上先 `setTimeout(…, 200)` 再 `startDragging()`（为双击让路），
+   * 结果是按下后的 200ms 里窗口纹丝不动，手感像「拖不动」。
+   *
+   * 关于 `.title-bar-drag { app-region: drag }`（见 index.css）是不是已经是原生拖动区：
+   * - 是，但只在 Windows/WebView2 上生效：wry 0.55.1 建 webview 时会打开
+   *   `ICoreWebView2Settings9::SetIsNonClientRegionSupportEnabled(true)`
+   *   （wry-0.55.1/src/webview2/mod.rs:601），WebView2 123+ 才支持这个非客户区特性；
+   * - 它和 JS 路径并不重复：wry 自己的示例（wry-0.55.1/examples/custom_titlebar.rs:130）
+   *   注释写明 `app-region: drag` 在 Windows 上「让触摸拖动可用」，鼠标拖动仍由
+   *   mousedown → drag_window 那条 JS 路径承担；示例里两套并存；
+   * - AGENTS.md 也要求「始终在 mousedown 时调用 `startDragging()`（回退方案；CSS 拖拽
+   *   单独失效时必须有它）」。
+   * 所以这里两套都保留：CSS 拖动区负责触摸/无 JS 场景，JS 路径负责鼠标与旧 WebView2。
+   *
+   * 双击最大化仍走 onDoubleClick → `toggle_maximize_window`（等价于 Tauri 自带
+   * drag.js 的 `e.detail === 2` 分支）。如果以后真机上发现系统非客户区双击与它重复
+   * 触发（最大化了又还原），再改成在 mousedown 里按 `e.detail` 分流并删掉 onDoubleClick。
+   */
   const handleDragMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     if (target.closest("button") || target.closest(".title-bar-nodrag") || target.closest("a")) {
@@ -97,24 +117,12 @@ export function TitleBar() {
 
     void (async () => {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      if (IS_WINDOWS) {
-        // Delay so double-click maximize can cancel the pending drag.
-        if (dragTimerRef.current) clearTimeout(dragTimerRef.current);
-        dragTimerRef.current = setTimeout(() => {
-          void getCurrentWindow().startDragging();
-        }, 200);
-      } else {
-        await getCurrentWindow().startDragging();
-      }
+      await getCurrentWindow().startDragging();
     })();
   }, []);
 
   const handleTitleBarDoubleClick = useCallback(() => {
     if (!IS_WINDOWS) return;
-    if (dragTimerRef.current) {
-      clearTimeout(dragTimerRef.current);
-      dragTimerRef.current = null;
-    }
     void invoke("toggle_maximize_window");
   }, []);
 

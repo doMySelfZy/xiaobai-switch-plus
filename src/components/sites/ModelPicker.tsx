@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { App, Button, Checkbox, Input, theme, Tooltip } from "antd";
 import { CheckSquare, FlaskConical, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -46,6 +46,83 @@ function modelFetchErrorPresentation(error: string): ModelFetchErrorPresentation
   return { messageKey: "sites.modelListFetchRetry" };
 }
 
+interface ModelChipGroupProps {
+  prefix: string;
+  models: SiteModel[];
+  selectedModelId: string | null;
+  selecting: boolean;
+  selectedIds: Set<string>;
+  onToggleSelected: (modelId: string) => void;
+  onSelect: (modelId: string) => void;
+  onDelete: (modelId: string) => void;
+}
+
+/**
+ * 一个模型族的 chip 行。
+ *
+ * `memo` 是关键：搜索框每敲一个字都会重渲染 ModelPicker，但 `deferredQuery`
+ * 没跟上时过滤结果（连带这里的 `models`）还是同一个引用，行就不必重渲染——
+ * 模型多的时候整片 chip 重建才是输入卡顿的来源。
+ */
+const ModelChipGroup = memo(function ModelChipGroup({
+  prefix,
+  models,
+  selectedModelId,
+  selecting,
+  selectedIds,
+  onToggleSelected,
+  onSelect,
+  onDelete,
+}: ModelChipGroupProps) {
+  const { t } = useTranslation();
+  const { token } = theme.useToken();
+  return (
+    <div data-model-group={prefix}>
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span className="text-xs font-medium" style={{ color: token.colorTextTertiary }}>
+          {prefix}
+        </span>
+        <ModelCountBadge>{t("sites.modelCount", { count: models.length })}</ModelCountBadge>
+      </div>
+      <div className="flex flex-wrap content-start gap-2">
+        {models.map((m) => {
+          const selected = selectedModelId === m.modelId;
+          const picked = selecting && selectedIds.has(m.modelId);
+          const label = m.displayName || m.modelId;
+          return (
+            <ModelTag
+              key={m.id || m.modelId}
+              title={m.modelId}
+              selected={selected}
+              picked={picked}
+              closable={selecting}
+              onClick={() => {
+                if (selecting) {
+                  onToggleSelected(m.modelId);
+                  return;
+                }
+                onSelect(m.modelId);
+              }}
+              onClose={() => {
+                onDelete(m.modelId);
+              }}
+            >
+              {selecting && (
+                <Checkbox
+                  checked={picked}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={() => onToggleSelected(m.modelId)}
+                />
+              )}
+              {label}
+            </ModelTag>
+          );
+        })}
+      </div>
+    </div>
+  );
+});
+
 export function ModelPicker({
   site,
   models: modelsProp,
@@ -60,8 +137,10 @@ export function ModelPicker({
   const setSelectedModel = useSiteStore((s) => s.setSelectedModel);
   const deleteModel = useSiteStore((s) => s.deleteModel);
   const clearModels = useSiteStore((s) => s.clearModels);
-  const fetching = useSiteStore((s) => s.fetchingModels);
+  // per-site：只在"这个站点"正在拉取时显示拉取中，别的站点刷新不该让这里转圈。
+  const fetching = useSiteStore((s) => Boolean(s.fetchingModelsBySite[site.id]));
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [clearing, setClearing] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -104,13 +183,15 @@ export function ModelPicker({
   }, [models]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    // 用 deferred 值过滤：输入框仍绑原始 query（击键立刻回显），过滤与 chip
+    // 重渲染被推迟到浏览器空闲时，快速连打不会一个字一次全列表重建。
+    const q = deferredQuery.trim().toLowerCase();
     if (!q) return models;
     return models.filter((m) => {
       const name = (m.displayName || m.modelId).toLowerCase();
       return name.includes(q) || m.modelId.toLowerCase().includes(q);
     });
-  }, [models, query]);
+  }, [models, deferredQuery]);
 
   const groups = useMemo(() => groupModelsByPrefix(filtered), [filtered]);
 
@@ -135,27 +216,38 @@ export function ModelPicker({
     }
   };
 
-  const handleDelete = async (modelId: string) => {
-    try {
-      await deleteModel(site.id, modelId);
-    } catch (e) {
-      message.error(isAppError(e) ? e.message : String(e));
-    }
-  };
+  // 下面几个回调都传给 memo 的 chip 行：身份必须稳定，否则 memo 形同虚设。
+  const handleDelete = useCallback(
+    async (modelId: string) => {
+      try {
+        await deleteModel(site.id, modelId);
+      } catch (e) {
+        message.error(isAppError(e) ? e.message : String(e));
+      }
+    },
+    [deleteModel, message, site.id],
+  );
 
   const toggleSelecting = () => {
     setSelecting((on) => !on);
     setSelectedIds(new Set());
   };
 
-  const toggleSelected = (modelId: string) => {
+  const toggleSelected = useCallback((modelId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(modelId)) next.delete(modelId);
       else next.add(modelId);
       return next;
     });
-  };
+  }, []);
+
+  const handleSelectModel = useCallback(
+    (modelId: string) => {
+      void setSelectedModel(site.id, modelId);
+    },
+    [setSelectedModel, site.id],
+  );
 
   const handleDeleteSelected = () => {
     const ids = Array.from(selectedIds);
@@ -341,54 +433,17 @@ export function ModelPicker({
           ) : (
             <div className="flex flex-col gap-3">
               {groups.map((group) => (
-                <div key={group.prefix} data-model-group={group.prefix}>
-                  <div className="mb-1.5 flex items-center gap-1.5">
-                    <span
-                      className="text-xs font-medium"
-                      style={{ color: token.colorTextTertiary }}
-                    >
-                      {group.prefix}
-                    </span>
-                    <ModelCountBadge>
-                      {t("sites.modelCount", { count: group.models.length })}
-                    </ModelCountBadge>
-                  </div>
-                  <div className="flex flex-wrap content-start gap-2">
-                    {group.models.map((m) => {
-                      const selected = site.selectedModelId === m.modelId;
-                      const picked = selecting && selectedIds.has(m.modelId);
-                      const label = m.displayName || m.modelId;
-                      return (
-                        <ModelTag
-                          key={m.id || m.modelId}
-                          title={m.modelId}
-                          selected={selected}
-                          picked={picked}
-                          closable={selecting}
-                          onClick={() => {
-                            if (selecting) {
-                              toggleSelected(m.modelId);
-                              return;
-                            }
-                            void setSelectedModel(site.id, m.modelId);
-                          }}
-                          onClose={() => {
-                            void handleDelete(m.modelId);
-                          }}
-                        >
-                          {selecting && (
-                            <Checkbox
-                              checked={picked}
-                              onClick={(e) => e.stopPropagation()}
-                              onChange={() => toggleSelected(m.modelId)}
-                            />
-                          )}
-                          {label}
-                        </ModelTag>
-                      );
-                    })}
-                  </div>
-                </div>
+                <ModelChipGroup
+                  key={group.prefix}
+                  prefix={group.prefix}
+                  models={group.models}
+                  selectedModelId={site.selectedModelId}
+                  selecting={selecting}
+                  selectedIds={selectedIds}
+                  onToggleSelected={toggleSelected}
+                  onSelect={handleSelectModel}
+                  onDelete={handleDelete}
+                />
               ))}
             </div>
           )}
