@@ -53,23 +53,43 @@ pub struct ValidatedAppBackup {
     pub manifest: AppBackupManifest,
 }
 
+/// 全库快照的中间产物：`VACUUM INTO` 出来的数据库副本 + 它所在的临时目录。
+///
+/// 临时目录由本值持有（`_directory` 只用于保活/清理）：打包完成前丢掉它，快照就没了。
+pub struct DatabaseSnapshot {
+    _directory: tempfile::TempDir,
+    path: PathBuf,
+}
+
+impl DatabaseSnapshot {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// 本地全库备份。**只有 `VACUUM INTO` 阶段占用全局数据库锁**：sha256 与 zip 打包
+/// 放到锁外（见 [`pack_snapshot`]），否则打包期间所有 UI 读命令都要排队等库锁。
 pub fn create_local_backup(
-    conn: &Connection,
+    db: &crate::db::Db,
     reason: &str,
     max_copies: u32,
 ) -> AppResult<CreatedAppBackup> {
     let dir = app_backups_dir()?;
-    let created = create_backup_in(conn, &master_key_path()?, &dir, reason)?;
+    let snapshot = db.with_conn(|conn| snapshot_database(conn, &dir))?;
+    let created = pack_snapshot(&snapshot, &master_key_path()?, &dir, reason)?;
     prune_backups_in(&dir, max_copies)?;
     Ok(created)
 }
 
-pub fn create_backup_in(
+/// 快照阶段：把库以 `VACUUM INTO` 复制成独立文件。**需要数据库连接**，
+/// 因此必须在 `with_conn` 里调用——这是整条备份链里唯一需要库锁的一步。
+///
+/// `VACUUM INTO` 是同步完成的：返回时快照文件已经完整，之后没有任何写入者，
+/// 所以 [`pack_snapshot`] 可以在锁外安全地 hash/压缩，不会打包到"半写状态"。
+pub fn snapshot_database(
     conn: &Connection,
-    key_path: &Path,
     destination_dir: &Path,
-    reason: &str,
-) -> AppResult<CreatedAppBackup> {
+) -> AppResult<DatabaseSnapshot> {
     fs::create_dir_all(destination_dir)?;
     set_private_dir_permissions(destination_dir);
     let temp_dir = tempfile::Builder::new()
@@ -80,7 +100,22 @@ pub fn create_backup_in(
     let escaped = snapshot_path.to_string_lossy().replace('\'', "''");
     conn.execute_batch(&format!("VACUUM INTO '{escaped}'"))
         .map_err(|e| AppError::new("backup_failed", format!("database snapshot failed: {e}")))?;
+    Ok(DatabaseSnapshot {
+        _directory: temp_dir,
+        path: snapshot_path,
+    })
+}
 
+/// 打包阶段：读 master.key、算 sha256、写 zip 并原子改名。**不需要数据库连接**，
+/// 调用方应把它放在锁外。归档条目名与 manifest 契约保持既有形状
+/// （`xiaobai-switch.db` / `master.key` / `manifest.json`）。
+pub fn pack_snapshot(
+    snapshot: &DatabaseSnapshot,
+    key_path: &Path,
+    destination_dir: &Path,
+    reason: &str,
+) -> AppResult<CreatedAppBackup> {
+    let snapshot_path = snapshot.path();
     let key_bytes = fs::read(key_path)
         .map_err(|e| AppError::new("backup_failed", format!("cannot read master.key: {e}")))?;
     if key_bytes.len() != 32 {
@@ -107,12 +142,12 @@ pub fn create_backup_in(
         created_at,
         device_name,
         reason: reason.into(),
-        database_size: fs::metadata(&snapshot_path)?.len(),
-        database_sha256: sha256_file(&snapshot_path)?,
+        database_size: fs::metadata(snapshot_path)?.len(),
+        database_sha256: sha256_file(snapshot_path)?,
         master_key_size: key_bytes.len() as u64,
         master_key_sha256: sha256_bytes(&key_bytes),
     };
-    let write_result = write_bundle(&staging, &snapshot_path, &key_bytes, &manifest);
+    let write_result = write_bundle(&staging, snapshot_path, &key_bytes, &manifest);
     if let Err(error) = write_result {
         let _ = fs::remove_file(&staging);
         return Err(error);
@@ -124,6 +159,16 @@ pub fn create_backup_in(
         file_name,
         path: destination,
     })
+}
+
+pub fn create_backup_in(
+    conn: &Connection,
+    key_path: &Path,
+    destination_dir: &Path,
+    reason: &str,
+) -> AppResult<CreatedAppBackup> {
+    let snapshot = snapshot_database(conn, destination_dir)?;
+    pack_snapshot(&snapshot, key_path, destination_dir, reason)
 }
 
 fn write_bundle(
@@ -488,10 +533,23 @@ pub fn prune_backups_in(dir: &Path, max_copies: u32) -> AppResult<usize> {
             .unwrap_or_else(|| name.clone().into_owned());
         std::cmp::Reverse(rest)
     });
+    prune_entries(backups, max_copies)
+}
+
+/// 删除列表尾部（最旧）的备份。
+///
+/// `VACUUM INTO` 与打包拆分后，本地备份不再由全局数据库锁串行化，两个并发备份
+/// （例如手动备份撞上同步前的 `pre_sync_apply` 快照）可能各自持有一份**过期列表**：
+/// 另一个剪枝已经删掉的文件再删一次只会拿到 `NotFound`。目标（目录里最多留 N 份）
+/// 此时已经达成，不能把它当失败上报——否则用户会看到一条"备份失败"，而备份其实已经建好。
+fn prune_entries(backups: Vec<fs::DirEntry>, max_copies: usize) -> AppResult<usize> {
     let mut removed = 0;
     for entry in backups.into_iter().skip(max_copies) {
-        fs::remove_file(entry.path())?;
-        removed += 1;
+        match fs::remove_file(entry.path()) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     Ok(removed)
 }
@@ -633,6 +691,53 @@ mod tests {
             output.write_all(&entries[name]).unwrap();
         }
         output.finish().unwrap();
+    }
+
+    /// 两阶段备份（锁内 `VACUUM INTO` + 锁外 hash/zip）必须和一次性版本产出完全相同的包：
+    /// 快照文件在打包时已经是完整的（不存在"打包了半写状态"），归档条目名与 manifest 契约
+    /// 也不得改变，否则旧版本读不了新备份。
+    #[test]
+    fn snapshot_and_pack_match_the_one_shot_bundle_contract() {
+        let (temp, conn, key_path) = fixture();
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (id, json) VALUES (1, ?1)",
+            [r#"{"a":1}"#],
+        )
+        .unwrap();
+        let output = temp.path().join("out");
+
+        let snapshot = snapshot_database(&conn, &output).unwrap();
+        // 快照此刻已经是完整可读的数据库：锁一释放，打包读到的就是这个完整文件。
+        let snapshot_conn = Connection::open(snapshot.path()).unwrap();
+        let value: String = snapshot_conn
+            .query_row("SELECT json FROM settings WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, r#"{"a":1}"#);
+        drop(snapshot_conn);
+
+        let created = pack_snapshot(&snapshot, &key_path, &output, "manual").unwrap();
+        assert!(created.file_name.starts_with(BACKUP_PREFIX));
+        assert_eq!(
+            bundle_entry_names(&created.path),
+            vec![
+                BUNDLE_DATABASE_FILE_NAME.to_string(),
+                "master.key".to_string(),
+                "manifest.json".to_string(),
+            ],
+            "归档条目名是内部协议：改名会让旧备份读不出来"
+        );
+
+        let extracted = temp.path().join("extracted");
+        let validated = validate_and_extract_bundle(&created.path, &extracted).unwrap();
+        assert_eq!(validated.manifest.reason, "manual");
+        assert_eq!(fs::read(validated.master_key_path).unwrap(), vec![7_u8; 32]);
+    }
+
+    fn bundle_entry_names(path: &Path) -> Vec<String> {
+        let mut archive = zip::ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+        (0..archive.len())
+            .map(|index| archive.by_index(index).unwrap().name().to_string())
+            .collect()
     }
 
     #[test]
@@ -883,5 +988,31 @@ mod tests {
         assert_eq!(prune_backups_in(&dir, 1).unwrap(), 1);
         assert!(dir.join(new_new).exists());
         assert!(!dir.join(legacy_old).exists());
+    }
+
+    /// E2 之后本地备份不再被全局数据库锁串行化：两个并发备份（手动备份撞上同步前的
+    /// `pre_sync_apply` 快照）可能各自持有一份过期列表，其中一个已经删掉的文件会被另
+    /// 一个再删一次。那只是 `NotFound`，目标已经达成，不能报成"备份失败"。
+    #[test]
+    fn pruning_tolerates_a_file_another_prune_already_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("backups");
+        fs::create_dir(&dir).unwrap();
+        let oldest = "xiaobai-switch-backup-20260101_000000.host.00000001.zip";
+        let middle = "xiaobai-switch-backup-20260102_000000.host.00000002.zip";
+        let newest = "xiaobai-switch-backup-20260103_000000.host.00000003.zip";
+        for name in [oldest, middle, newest] {
+            fs::write(dir.join(name), b"payload").unwrap();
+        }
+
+        // 取一份列表（等于并发剪枝发生前的视角），再让"另一个剪枝"删掉最旧的那个。
+        let mut listing: Vec<fs::DirEntry> = fs::read_dir(&dir).unwrap().flatten().collect();
+        listing.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        fs::remove_file(dir.join(oldest)).unwrap();
+
+        let removed = prune_entries(listing, 1).unwrap();
+        assert_eq!(removed, 1, "已经不存在的备份不计入删除数，也不算失败");
+        assert!(dir.join(newest).exists(), "保留策略仍然生效");
+        assert!(!dir.join(middle).exists());
     }
 }

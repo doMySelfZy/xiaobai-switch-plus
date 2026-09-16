@@ -50,7 +50,9 @@ pub async fn save_webdav_config(
         .db
         .with_conn(|conn| repo::webdav::save_config(conn, &stored))?;
     let view = config_view(stored);
-    restart_webdav_scheduler(app).await?;
+    // 重启调度器在后台做：它要抢 `webdav_operation`，而该锁在同步期间横跨网络传输，
+    // 等它完成会把「保存设置」变成几分钟的转圈。
+    restart_webdav_scheduler_in_background(app);
     // 配置完成立即做一次同步决策：新机器配置后马上拉取云端数据（或首次上传）。
     crate::sync::request_sync_poll();
     Ok(view)
@@ -96,9 +98,8 @@ pub async fn create_app_backup(
         "local" => {
             let _guard = state.webdav_operation.lock().await;
             let settings = state.db.with_conn(repo::settings::get_settings)?;
-            let created = state.db.with_conn(|conn| {
-                app_backup::create_local_backup(conn, "manual", settings.max_backup_copies)
-            })?;
+            let created =
+                app_backup::create_local_backup(&state.db, "manual", settings.max_backup_copies)?;
             Ok(BackupOperationResult {
                 file_name: created.file_name,
                 local_path: Some(created.path.display().to_string()),
@@ -108,7 +109,7 @@ pub async fn create_app_backup(
         }
         "webdav" => {
             let result = run_webdav_backup(&app, "manual").await?;
-            restart_webdav_scheduler(app).await?;
+            restart_webdav_scheduler_in_background(app);
             Ok(result)
         }
         _ => Err(AppError::new(
@@ -165,9 +166,7 @@ pub async fn restore_local_backup(
     let staged = temp_dir.path().join("backup.zip");
     app_backup::stage_local_backup(&file_name, &staged)?;
     let settings = state.db.with_conn(repo::settings::get_settings)?;
-    state.db.with_conn(|conn| {
-        app_backup::create_local_backup(conn, "pre_restore", settings.max_backup_copies)
-    })?;
+    app_backup::create_local_backup(&state.db, "pre_restore", settings.max_backup_copies)?;
     // 手动恢复不携带同步目标：不提交同步记账（未指定 expected）。
     crate::pending_restore::queue_pending_restore(&staged, &app_dir, None)?;
     drop(temp_dir);
@@ -177,9 +176,13 @@ pub async fn restore_local_backup(
     Ok(())
 }
 
+/// 远端备份列表是纯读操作：不抢 `webdav_operation`。
+///
+/// 该锁在同步期间会横跨网络传输，抢锁会让「打开备份面板」在同步进行时干等到同步结束
+/// （服务器卡住时就是几分钟）。这里的 PROPFIND 只读远端元数据，与上传/下载并发运行
+/// 不会破坏任何东西——列出来的只是当时的目录快照。
 #[tauri::command]
 pub async fn list_webdav_backups(state: State<'_, AppState>) -> AppResult<Vec<RemoteBackupInfo>> {
-    let _guard = state.webdav_operation.lock().await;
     let client = client_from_state(&state)?;
     client.list_backups().await
 }
@@ -198,9 +201,7 @@ pub async fn restore_webdav_backup(
 ) -> AppResult<()> {
     let _guard = state.webdav_operation.lock().await;
     let settings = state.db.with_conn(repo::settings::get_settings)?;
-    state.db.with_conn(|conn| {
-        app_backup::create_local_backup(conn, "pre_restore", settings.max_backup_copies)
-    })?;
+    app_backup::create_local_backup(&state.db, "pre_restore", settings.max_backup_copies)?;
     let app_dir = crate::paths::app_dir()?;
     let temp_dir = tempfile::Builder::new()
         .prefix(".webdav-restore-")
@@ -247,6 +248,19 @@ pub async fn sync_now(app: AppHandle, state: State<'_, AppState>) -> AppResult<S
 #[tauri::command]
 pub fn take_restore_result() -> AppResult<Option<RestoreStartupResult>> {
     crate::pending_restore::take_restore_result(&crate::paths::app_dir()?)
+}
+
+/// 后台重启 WebDAV 调度器：不阻塞调用方。
+///
+/// `restart_webdav_scheduler` 内部要先拿到 `webdav_operation`，而正在进行的同步会持锁
+/// **横跨网络传输**。调用方（保存设置、手动备份）要的是"立刻返回 + 调度器稍后重排"，
+/// 而不是等同步跑完。重启失败只记日志：配置已经存好了，调度器会在下次启动/保存时重建。
+fn restart_webdav_scheduler_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = restart_webdav_scheduler(app).await {
+            tracing::warn!(error = %error, "failed to restart the WebDAV scheduler");
+        }
+    });
 }
 
 pub async fn restart_webdav_scheduler(app: AppHandle) -> AppResult<()> {
@@ -312,14 +326,16 @@ async fn run_webdav_backup(app: &AppHandle, reason: &str) -> AppResult<BackupOpe
         let temp_dir = tempfile::Builder::new()
             .prefix(".webdav-backup-")
             .tempdir_in(&app_dir)?;
-        let created = state.db.with_conn(|conn| {
-            app_backup::create_backup_in(
-                conn,
-                &crate::paths::master_key_path()?,
-                temp_dir.path(),
-                reason,
-            )
-        })?;
+        // 锁内只做 `VACUUM INTO`，sha256 与 zip 打包在锁外做（见 app_backup 的分段说明）。
+        let snapshot = state
+            .db
+            .with_conn(|conn| app_backup::snapshot_database(conn, temp_dir.path()))?;
+        let created = app_backup::pack_snapshot(
+            &snapshot,
+            &crate::paths::master_key_path()?,
+            temp_dir.path(),
+            reason,
+        )?;
         let client = client_from_stored(&state, &config)?;
         client
             .upload_file(&created.file_name, &created.path)

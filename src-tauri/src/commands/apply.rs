@@ -34,7 +34,11 @@ pub(crate) fn zcode_model_ids(selected: &str, catalog: Vec<String>) -> Vec<Strin
     out
 }
 
-#[tauri::command]
+/// `(async)` 是必须的：普通 `#[tauri::command]` 的同步函数在 IPC 处理线程上
+/// 直接执行（`tauri-macros` 生成 `kind.block(result, resolver)`，不跳线程池），
+/// 而本命令会做文件写入、`fsync`、备份与剪枝，整段时间会卡住窗口消息泵。
+/// 加 `(async)` 后主体在异步运行时上执行，`try_lock_*` 目标级锁语义不变。
+#[tauri::command(async)]
 pub fn apply_site(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -728,7 +732,8 @@ pub(crate) fn finalize_backup_dir(
     let _ = backup::prune_target_backups(target, max_copies);
 }
 
-#[tauri::command]
+/// 见 `apply_site`：改目标配置文件 + 备份清理，必须离开 IPC 线程。
+#[tauri::command(async)]
 pub fn revert_target(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -783,7 +788,8 @@ pub fn revert_target(
     Ok(())
 }
 
-#[tauri::command]
+/// 见 `apply_site`：恢复官方配置同样会写盘 + 备份 + 剪枝。
+#[tauri::command(async)]
 pub fn restore_official_target(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -926,7 +932,8 @@ pub fn delete_backup(id: String) -> AppResult<()> {
     backup::delete_backup_in(&backups_dir()?, &id)
 }
 
-#[tauri::command]
+/// 见 `apply_site`：恢复备份会重写整个目标配置树并做原子替换。
+#[tauri::command(async)]
 pub fn restore_backup(
     app: tauri::AppHandle,
     state: State<'_, AppState>,

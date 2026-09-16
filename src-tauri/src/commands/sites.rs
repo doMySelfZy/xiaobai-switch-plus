@@ -63,7 +63,10 @@ pub fn import_site_from_deep_link(
     Ok(result)
 }
 
-#[tauri::command]
+/// Base URL 变化时会连带重写已应用目标的配置文件（写盘 + 备份）。
+/// `(async)`：普通 `#[tauri::command]` 的同步函数在 IPC 处理线程上执行，
+/// 放在那里会卡住窗口消息泵；目标级锁语义不变。
+#[tauri::command(async)]
 pub fn update_site(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -162,7 +165,8 @@ pub async fn switch_site_api_key(
     Ok(result)
 }
 
-#[tauri::command]
+/// 见 `update_site`：换线路同样要重写所有绑定该站点的目标配置。
+#[tauri::command(async)]
 pub fn switch_site_route(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -176,7 +180,8 @@ pub fn switch_site_route(
     Ok(result)
 }
 
-#[tauri::command]
+/// 见 `update_site`：`cleanup_targets` 打开时要逐目标做手术式回滚（写盘 + 环境变量清理）。
+#[tauri::command(async)]
 pub fn delete_site(
     app: tauri::AppHandle,
     state: State<'_, AppState>,

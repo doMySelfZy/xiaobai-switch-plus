@@ -327,14 +327,17 @@ async fn run_sync_inner(
             let temp_dir = tempfile::Builder::new()
                 .prefix(".sync-")
                 .tempdir_in(&app_dir)?;
-            let local_bundle = state.db.with_conn(|conn| {
-                app_backup::create_backup_in(
-                    conn,
-                    &crate::paths::master_key_path()?,
-                    temp_dir.path(),
-                    reason,
-                )
-            })?;
+            // 锁内只做需要连接的 `VACUUM INTO`；sha256 与 zip 打包只需要那个独立快照文件，
+            // 放到锁外做——否则整段时间都占着全局数据库锁，所有 UI 读命令排队。
+            let snapshot = state
+                .db
+                .with_conn(|conn| app_backup::snapshot_database(conn, temp_dir.path()))?;
+            let local_bundle = app_backup::pack_snapshot(
+                &snapshot,
+                &crate::paths::master_key_path()?,
+                temp_dir.path(),
+                reason,
+            )?;
             let device_name = app_backup::parse_device_from_filename(&local_bundle.file_name);
             let next_revision = remote.as_ref().map(|m| m.revision + 1).unwrap_or(1);
             client
@@ -403,9 +406,12 @@ async fn run_sync_inner(
                 ));
             }
             // 应用前强制本地快照：任何远端数据替换都可回滚。
-            state.db.with_conn(|conn| {
-                app_backup::create_local_backup(conn, "pre_sync_apply", settings.max_backup_copies)
-            })?;
+            // （只有 `VACUUM INTO` 占库锁，hash/打包在锁外做）
+            app_backup::create_local_backup(
+                &state.db,
+                "pre_sync_apply",
+                settings.max_backup_copies,
+            )?;
             // 记账延后：换库要等下次启动，此刻提交 last_synced 会留下"远端即共同祖先"的假账，
             // 一旦重启前退出或恢复失败，下一轮就会判定"只有本地变了"并用旧数据覆盖云端。
             crate::pending_restore::queue_pending_restore(
@@ -800,6 +806,10 @@ mod tests {
     /// 打包时机的结构护栏：完整引擎路径需要 AppHandle 与真实 WebDAV 服务，无法在单测里跑通，
     /// 这里直接对 `run_sync_inner` 源码分段断言——整库复制只允许出现在 Upload 分支，
     /// 且 Download 必须保留应用前的本地快照。
+    ///
+    /// 快照拆成"锁内 `VACUUM INTO` + 锁外 hash/zip"后，Upload 分支不再出现
+    /// `create_backup_in`（它仍保留给只需要一键完成的调用方），因此护栏改为锁定
+    /// `snapshot_database` 出现在 `with_conn` 内、`pack_snapshot` 出现在其后。
     #[test]
     fn whole_database_bundle_is_built_only_for_uploads() {
         fn segment<'a>(body: &'a str, from: &str, to: Option<&str>) -> &'a str {
@@ -823,13 +833,29 @@ mod tests {
         let before_decision = segment(body, "async fn run_sync_inner", Some("match action {"));
         assert!(!before_decision.contains("create_backup_in"));
         assert!(!before_decision.contains("create_local_backup"));
+        assert!(!before_decision.contains("snapshot_database"));
 
         let upload = segment(body, "SyncAction::Upload =>", Some("SyncAction::Download =>"));
-        assert_eq!(upload.matches("create_backup_in").count(), 1);
+        // 全库复制只允许一次，且 `VACUUM INTO` 必须在库锁内、打包必须在库锁外。
+        assert_eq!(upload.matches("snapshot_database").count(), 1);
+        assert_eq!(upload.matches("pack_snapshot").count(), 1);
+        assert!(
+            upload.contains("with_conn(|conn| app_backup::snapshot_database(conn,"),
+            "只有 VACUUM INTO 需要数据库连接，它必须留在 with_conn 内"
+        );
+        let snapshot_at = upload.find("snapshot_database").unwrap();
+        let pack_at = upload.find("pack_snapshot").unwrap();
+        assert!(
+            snapshot_at < pack_at,
+            "先取快照再打包：打包读的是已经完整的快照文件"
+        );
+        // `create_backup_in` 会把 hash/zip 一起塞回库锁里，上传路径不得使用。
+        assert!(!upload.contains("create_backup_in"));
         assert!(!upload.contains("create_local_backup"));
 
         let download = segment(body, "SyncAction::Download =>", None);
         assert!(!download.contains("create_backup_in"), "下载分支不得打包本机数据");
+        assert!(!download.contains("snapshot_database"));
         assert_eq!(download.matches("create_local_backup").count(), 1);
         assert!(download.contains("pre_sync_apply"));
         assert!(download.contains("queue_pending_restore"));
@@ -838,9 +864,11 @@ mod tests {
 
         let in_sync = segment(body, "SyncAction::InSync =>", Some("SyncAction::Incompatible =>"));
         assert!(!in_sync.contains("create_backup_in"));
+        assert!(!in_sync.contains("snapshot_database"));
         let incompatible = segment(body, "SyncAction::Incompatible =>", Some("SyncAction::Upload =>"));
         assert!(!incompatible.contains("create_backup_in"));
         assert!(!incompatible.contains("create_local_backup"));
+        assert!(!incompatible.contains("snapshot_database"));
         assert!(!incompatible.contains("save_last_synced"));
     }
 

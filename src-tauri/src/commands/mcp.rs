@@ -145,7 +145,10 @@ pub fn get_mcp_server(state: State<'_, AppState>, id: String) -> AppResult<McpSe
         .with_conn(|conn| repo::mcp::get(conn, &id, &state.crypto))
 }
 
-#[tauri::command]
+/// `(async)` 是必须的：普通 `#[tauri::command]` 的同步函数在 IPC 处理线程上执行，
+/// 本命令会连带把托管条目写回各客户端配置文件（写盘 + 原子替换），
+/// 放在 IPC 线程上会卡住窗口消息泵。`try_lock_*` 目标级锁语义不变。
+#[tauri::command(async)]
 pub fn save_mcp_server(
     state: State<'_, AppState>,
     input: McpServerInput,
@@ -166,7 +169,8 @@ pub struct McpSaveResult {
     pub sweep: McpApplyResult,
 }
 
-#[tauri::command]
+/// 见 `save_mcp_server`：删除后要清理各客户端里的托管条目。
+#[tauri::command(async)]
 pub fn delete_mcp_server(state: State<'_, AppState>, id: String) -> AppResult<McpApplyResult> {
     state.db.with_conn(|conn| repo::mcp::delete(conn, &id))?;
     apply_to_targets(&state, &[])
@@ -188,7 +192,8 @@ pub struct McpApplyResult {
     pub applied_at: i64,
 }
 
-#[tauri::command]
+/// 见 `save_mcp_server`：一次要把多个客户端配置文件重写并落盘。
+#[tauri::command(async)]
 pub fn apply_mcp_servers(
     state: State<'_, AppState>,
     targets: Vec<TargetKind>,
@@ -367,7 +372,9 @@ pub fn mcp_target_paths(state: State<'_, AppState>) -> AppResult<Vec<(TargetKind
 ///
 /// 只读：不修改任何客户端文件。返回值不含任何密钥值，只含键名——界面据此展示
 /// 「需要填什么」，密钥要到纳管时才由后端直接读盘入库。
-#[tauri::command]
+/// `(async)`：要读四个客户端的大配置文件（`~/.claude.json` 可能很大），
+/// 放在 IPC 线程上会卡住窗口消息泵。
+#[tauri::command(async)]
 pub fn scan_existing_mcp(
     state: State<'_, AppState>,
 ) -> AppResult<crate::adapters::mcp_scan::ScanOutcome> {
@@ -417,7 +424,8 @@ pub struct McpImportResult {
 ///
 /// 密钥值由后端按定位符直接读盘取得，**不经过前端**。导入本身不修改来源客户端文件——
 /// 接管（删除等价的手工条目）发生在之后的「应用」时，且有指纹校验兜底。
-#[tauri::command]
+/// `(async)`：逐条读盘并做加密入库，属于纯磁盘工作。
+#[tauri::command(async)]
 pub fn import_scanned_mcp(
     state: State<'_, AppState>,
     locators: Vec<McpImportLocator>,

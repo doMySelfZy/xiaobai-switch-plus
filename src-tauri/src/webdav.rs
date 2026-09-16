@@ -15,6 +15,16 @@ use url::Url;
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PROPFIND_BYTES: u64 = 4 * 1024 * 1024;
 
+/// 控制类请求（连接检查、列目录、读写版本指针 manifest、删除）的超时预算。
+///
+/// 这些请求体量都很小，超时只应让界面短暂转圈。此前它们继承客户端的 300s 总超时，
+/// 一个卡住的服务器会把「测试连接」「列远端备份」变成几分钟的干等。
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(20);
+/// 备份上传/下载的预算：包体上限 512 MiB，必须给足传输时间。
+///
+/// 只有这两个方法是真正的"读写大文件"，其余请求一律走 [`CONTROL_TIMEOUT`]。
+const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
+
 #[derive(Debug, Clone)]
 pub struct WebDavRuntimeConfig {
     pub base_url: String,
@@ -29,6 +39,9 @@ pub struct WebDavClient {
     config: WebDavRuntimeConfig,
     root_url: Url,
     directory_url: Url,
+    /// 控制类请求预算。生产环境恒为 [`CONTROL_TIMEOUT`]，测试用它把预算压短，
+    /// 以便在秒级内断言"控制类请求不继承传输用的长超时"。
+    control_timeout: Duration,
 }
 
 impl WebDavClient {
@@ -36,7 +49,7 @@ impl WebDavClient {
         let (root_url, directory_url) = validate_and_build_urls(&config)?;
         let client = crate::http_client::build_client_with_tls(
             settings,
-            Duration::from_secs(300),
+            TRANSFER_TIMEOUT,
             config.accept_invalid_certs,
         )?;
         Ok(Self {
@@ -44,7 +57,14 @@ impl WebDavClient {
             config,
             root_url,
             directory_url,
+            control_timeout: CONTROL_TIMEOUT,
         })
+    }
+
+    #[cfg(test)]
+    fn with_control_timeout(mut self, timeout: Duration) -> Self {
+        self.control_timeout = timeout;
+        self
     }
 
     pub async fn check_connection(&self) -> AppResult<()> {
@@ -113,7 +133,7 @@ impl WebDavClient {
         let content_length = file.metadata().await?.len();
         let stream = ReaderStream::new(file);
         let response = self
-            .request(Method::PUT, url)
+            .transfer_request(Method::PUT, url)
             .header("Content-Type", "application/zip")
             .header(reqwest::header::CONTENT_LENGTH, content_length)
             .body(reqwest::Body::wrap_stream(stream))
@@ -128,7 +148,7 @@ impl WebDavClient {
     pub async fn download_file(&self, file_name: &str, destination: &Path) -> AppResult<()> {
         validate_remote_file_name(file_name)?;
         let url = append_segment(&self.directory_url, file_name)?;
-        let response = self.request(Method::GET, url).send().await?;
+        let response = self.transfer_request(Method::GET, url).send().await?;
         if !response.status().is_success() {
             return Err(http_status_error("WebDAV download", response.status()));
         }
@@ -271,10 +291,21 @@ impl WebDavClient {
         Ok(response.status())
     }
 
+    /// 控制类请求：在客户端预算之上再压一层短超时（`RequestBuilder::timeout` 从连接
+    /// 建立开始计时，因此连接阶段也受它约束）。
     fn request(&self, method: Method, url: Url) -> RequestBuilder {
         self.client
             .request(method, url)
             .basic_auth(&self.config.username, Some(&self.config.password))
+            .timeout(self.control_timeout)
+    }
+
+    /// 传输类请求（备份上传/下载）：保留长预算。
+    fn transfer_request(&self, method: Method, url: Url) -> RequestBuilder {
+        self.client
+            .request(method, url)
+            .basic_auth(&self.config.username, Some(&self.config.password))
+            .timeout(TRANSFER_TIMEOUT)
     }
 }
 
@@ -656,6 +687,38 @@ mod tests {
             remote_path: "backups".into(),
             accept_invalid_certs: false,
         }
+    }
+
+    /// 超时分层：控制类请求（列目录、读写版本指针等）走自己的短预算，
+    /// 不继承传输用的长预算——否则一个卡住的服务器会让界面干等几分钟。
+    #[tokio::test]
+    async fn control_requests_use_their_own_short_budget() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        // 接受连接后一个字都不回：模拟卡死的服务器。
+        let server = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+        let mut settings = AppSettings::default();
+        settings.proxy_mode = "none".into();
+        let client = WebDavClient::new(local_config(format!("http://{address}/")), &settings)
+            .unwrap()
+            .with_control_timeout(Duration::from_millis(500));
+
+        let started = std::time::Instant::now();
+        let error = client.check_connection().await.unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "control requests must not inherit the transfer timeout"
+        );
+        assert_eq!(serde_json::to_value(error).unwrap()["code"], "timeout");
+        assert!(
+            TRANSFER_TIMEOUT > CONTROL_TIMEOUT,
+            "transfers keep the longer budget, control requests the shorter one"
+        );
+        server.abort();
     }
 
     #[tokio::test]
