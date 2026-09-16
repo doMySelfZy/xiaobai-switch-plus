@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { App as AntdApp, ConfigProvider } from "antd";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +26,15 @@ function Wrapper({ children }: { children: ReactNode }) {
 const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "../../package.json"), "utf8")) as {
   version: string;
 };
+
+const realSaveSettings = useSettingsStore.getState().saveSettings;
+
+/** 把 store 的 saveSettings 换成计数 spy —— 组件通过选择器读到的就是它，能数出写库次数。 */
+function installSaveSettingsSpy() {
+  const spy = vi.fn(realSaveSettings);
+  useSettingsStore.setState({ saveSettings: spy });
+  return spy;
+}
 
 describe("SettingsPage network", () => {
   beforeEach(() => {
@@ -445,6 +454,159 @@ describe("SettingsPage paths", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
     await waitFor(() => {
       expect(useSettingsStore.getState().settings.primeAgentDirOverride).toBe("/tmp/custom-prime");
+    });
+  });
+});
+
+describe("SettingsPage number inputs", () => {
+  beforeEach(() => {
+    resetBrowserMock();
+    useUIStore.setState({ settingsTab: "network" });
+    useSettingsStore.setState({ loaded: false, loading: false });
+  });
+
+  afterEach(() => {
+    useSettingsStore.setState({ saveSettings: realSaveSettings });
+    resetBrowserMock();
+    useUIStore.setState({ settingsTab: "general" });
+  });
+
+  /** network 分区在「系统代理」下只有「测速结果有效期」一个数字输入。 */
+  async function renderProbeTtlInput() {
+    render(
+      <Wrapper>
+        <SettingsPage />
+      </Wrapper>,
+    );
+    const input = await screen.findByRole("spinbutton");
+    await waitFor(() => {
+      expect((input as HTMLInputElement).value).toBe("10");
+    });
+    return input as HTMLInputElement;
+  }
+
+  it("writes the database once on blur instead of on every keystroke", async () => {
+    const save = installSaveSettingsSpy();
+    const input = await renderProbeTtlInput();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "1" } });
+    fireEvent.change(input, { target: { value: "12" } });
+    fireEvent.change(input, { target: { value: "120" } });
+
+    expect(save).not.toHaveBeenCalled();
+    expect(input.value).toBe("120");
+
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 120 });
+    expect(useSettingsStore.getState().settings.routeProbeTtlMinutes).toBe(120);
+  });
+
+  it("clamps the value on commit, not while typing", async () => {
+    const save = installSaveSettingsSpy();
+    const input = await renderProbeTtlInput();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "5000" } });
+    expect(input.value).toBe("5000");
+    expect(save).not.toHaveBeenCalled();
+
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 1440 });
+    await waitFor(() => {
+      expect(input.value).toBe("1440");
+    });
+  });
+
+  it("commits on Enter without waiting for blur", async () => {
+    const save = installSaveSettingsSpy();
+    const input = await renderProbeTtlInput();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 13 });
+
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 30 });
+  });
+
+  it("keeps the draft while editing even when settings echo back", async () => {
+    const save = installSaveSettingsSpy();
+    const input = await renderProbeTtlInput();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "45" } });
+    // 模拟别处的保存 / 重新拉取把设置回写到 store：编辑中的草稿不能被回显覆盖。
+    act(() => {
+      useSettingsStore.setState({
+        settings: { ...useSettingsStore.getState().settings, routeProbeTtlMinutes: 999 },
+      });
+    });
+    expect(input.value).toBe("45");
+
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 45 });
+  });
+
+  it("flushes an uncommitted draft when the section unmounts", async () => {
+    const save = installSaveSettingsSpy();
+    const input = await renderProbeTtlInput();
+
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "77" } });
+    expect(save).not.toHaveBeenCalled();
+
+    act(() => {
+      useUIStore.setState({ settingsTab: "about" });
+    });
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 77 });
+  });
+
+  it("saves the floating window interval on blur in the general section", async () => {
+    const save = installSaveSettingsSpy();
+    act(() => {
+      useUIStore.setState({ settingsTab: "general" });
+    });
+    render(
+      <Wrapper>
+        <SettingsPage />
+      </Wrapper>,
+    );
+
+    const input = (await screen.findByRole("spinbutton")) as HTMLInputElement;
+    await waitFor(() => {
+      expect(input.value).toBe("5");
+    });
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "20" } });
+    expect(save).not.toHaveBeenCalled();
+
+    fireEvent.blur(input);
+    await waitFor(() => {
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+    expect(save).toHaveBeenCalledWith({
+      floatingWindow: {
+        enabled: true,
+        autoRefreshMinutes: 20,
+        positionX: 100,
+        positionY: 100,
+        collapsed: false,
+      },
     });
   });
 });

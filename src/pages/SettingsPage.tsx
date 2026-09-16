@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button, Divider, Input, InputNumber, Select, Switch, theme, App } from "antd";
 import { CircleDot, ExternalLink, Github, RefreshCw, Tag } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -33,6 +33,134 @@ import { useUpdateCheckBusy, useUpdateChecker } from "@/hooks/useUpdateChecker";
 import appIconUrl from "../../assets/brand/app-icon-1024.png?url";
 
 const rowStyle: React.CSSProperties = { padding: "4px 0" };
+
+/** 输入框原始文本 → 草稿数字：空 / 非法文本 → null。 */
+function parseNumberDraft(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** 提交时的规约：空 / 非法 → null，否则取整并夹进 [min, max]。 */
+function clampNumberDraft(raw: number | null, min: number, max: number): number | null {
+  if (raw == null || !Number.isFinite(raw)) return null;
+  return Math.min(max, Math.max(min, Math.round(raw)));
+}
+
+interface NumberDraftInputProps {
+  value: number | null;
+  min: number;
+  max: number;
+  step?: number;
+  size?: "small" | "middle" | "large";
+  style?: React.CSSProperties;
+  disabled?: boolean;
+  addonAfter?: React.ReactNode;
+  /** 提交（失焦 / Enter / 卸载）时回调，入参已取整并夹进 [min, max]。 */
+  onCommit: (value: number) => void;
+}
+
+/**
+ * 数字设置输入框：本地草稿 + 失焦 / Enter 提交。
+ *
+ * 为什么不像开关那样即时提交（AGENTS.md 的偏好是能即时就即时，这里是明确的例外）：
+ * 1) 值直接取自服务端回显时，每击键一次 `onChange` → `save_settings`，输入 `18087` 就是 5 次写库；
+ * 2) 回显值是 clamp 过的（min/max + 取整），会盖掉正在输入的内容——想输 `1440`，刚敲下 `1`
+ *    就被回填成 `1`，光标也回到末尾。
+ *
+ * 所以连续输入（数字/文本）先在组件内走草稿，提交时机是**失焦、Enter 或组件卸载**
+ * （卸载即切分区 / 退出设置页，提交是为了不把已经输入的内容悄悄丢掉）。
+ * 编辑期间不接受外部回显：`editingRef` 为真时跳过 `value → draft` 同步。
+ * 开关、下拉这类离散控件仍然即时提交。
+ */
+function NumberDraftInput({ value, min, max, onCommit, ...rest }: NumberDraftInputProps) {
+  const [draft, setDraft] = useState<number | null>(value);
+  // 是否处于"正在编辑"：聚焦或刚键入过即为真，期间不接受外部回显。
+  const editingRef = useRef(false);
+  // 最近一次键入的原始文本（未提交）。用原始文本而不是 rc 解析后的值：超出 min/max 的
+  // 输入 rc 在键入期间不会回调 onChange，只认 onChange 会把这些输入整段丢掉。
+  const typedRef = useRef<string | null>(null);
+  // 提交发生在事件回调与卸载清理里，统一从 ref 取最新值，避免闭包捕获旧 state。
+  const latestRef = useRef({ value, min, max, onCommit });
+  useEffect(() => {
+    latestRef.current = { value, min, max, onCommit };
+  }, [value, min, max, onCommit]);
+
+  // 外部值变化（别处保存后回读、切换页面回来）只在没有编辑时同步到草稿。
+  useEffect(() => {
+    if (!editingRef.current) setDraft(value);
+  }, [value]);
+
+  /** 落盘：与已保存值相同就只把显示对齐到 clamp 结果，不做无谓的写库。 */
+  const emitIfChanged = useCallback((next: number | null) => {
+    if (next == null) return;
+    setDraft(next);
+    const { value: current, onCommit: emit } = latestRef.current;
+    if (next !== current) emit(next);
+  }, []);
+
+  /** 失焦 / Enter / 卸载时的提交：只提交真正被键入过的文本。 */
+  const commit = useCallback(() => {
+    const typed = typedRef.current;
+    typedRef.current = null;
+    editingRef.current = false;
+    if (typed == null) return;
+    const { min: lo, max: hi } = latestRef.current;
+    emitIfChanged(clampNumberDraft(parseNumberDraft(typed), lo, hi));
+  }, [emitIfChanged]);
+
+  /** 步进按钮 / 上下方向键是离散操作，直接提交（与开关的即时提交一致）。 */
+  const handleStep = useCallback(
+    (next: number) => {
+      typedRef.current = null;
+      editingRef.current = false;
+      const { min: lo, max: hi } = latestRef.current;
+      emitIfChanged(clampNumberDraft(next, lo, hi));
+    },
+    [emitIfChanged],
+  );
+
+  const handleInput = useCallback((raw: string) => {
+    typedRef.current = raw;
+    editingRef.current = true;
+    const parsed = parseNumberDraft(raw);
+    // 空 / 非法文本不动草稿：DOM 已经显示用户输入，失焦时由 rc-input-number 自己还原；
+    // 把草稿置空反而会在中文输入法组合期间把输入框清掉。
+    if (parsed != null) setDraft(parsed);
+  }, []);
+
+  const handleChange = useCallback((next: number | string | null) => {
+    // rc 在失焦 / 步进后会回传它自己钳过的值：只同步显示，不当作用户输入
+    // （否则卸载时会重复提交一次）。
+    if (typeof next === "number") setDraft(next);
+  }, []);
+
+  // 卸载时把未提交的输入落盘：以前是每击键都保存，不落盘会让"输入后按 Esc 退出/切页"丢改动。
+  useEffect(
+    () => () => {
+      if (editingRef.current) commit();
+    },
+    [commit],
+  );
+
+  return (
+    <InputNumber
+      {...rest}
+      min={min}
+      max={max}
+      value={draft}
+      onChange={handleChange}
+      onInput={handleInput}
+      onStep={(next) => handleStep(Number(next))}
+      onFocus={() => {
+        editingRef.current = true;
+      }}
+      onBlur={commit}
+      onPressEnter={commit}
+    />
+  );
+}
 
 function GeneralSection() {
   const { t, i18n } = useTranslation();
@@ -191,27 +319,25 @@ function GeneralSection() {
         <Divider style={{ margin: "8px 0" }} />
         <div style={rowStyle} className="flex items-center justify-between gap-4">
           <span>{t("settings.floatingWindowRefreshInterval")}</span>
-          <InputNumber
+          <NumberDraftInput
             size="small"
             min={1}
             max={60}
             step={1}
             style={{ width: 120 }}
             value={settings.floatingWindow?.autoRefreshMinutes ?? 5}
-            onChange={(autoRefreshMinutes) => {
-              if (autoRefreshMinutes) {
-                void patch({
-                  floatingWindow: {
-                    enabled: settings.floatingWindow?.enabled ?? true,
-                    autoRefreshMinutes,
-                    positionX: settings.floatingWindow?.positionX ?? 100,
-                    positionY: settings.floatingWindow?.positionY ?? 100,
-                    collapsed: settings.floatingWindow?.collapsed ?? false,
-                  },
-                });
-                // 让已打开的悬浮窗立刻按新间隔刷新，不必重开。
-                notifyFloatingSettingsChanged();
-              }
+            onCommit={(autoRefreshMinutes) => {
+              void patch({
+                floatingWindow: {
+                  enabled: settings.floatingWindow?.enabled ?? true,
+                  autoRefreshMinutes,
+                  positionX: settings.floatingWindow?.positionX ?? 100,
+                  positionY: settings.floatingWindow?.positionY ?? 100,
+                  collapsed: settings.floatingWindow?.collapsed ?? false,
+                },
+              });
+              // 让已打开的悬浮窗立刻按新间隔刷新，不必重开。
+              notifyFloatingSettingsChanged();
             }}
             addonAfter={t("settings.minutes")}
           />
@@ -227,12 +353,10 @@ function NetworkSection() {
   const settings = useSettingsStore((s) => s.settings);
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const [host, setHost] = useState(settings.proxyHost ?? "");
-  const [port, setPort] = useState<number | null>(settings.proxyPort ?? null);
 
   useEffect(() => {
     setHost(settings.proxyHost ?? "");
-    setPort(settings.proxyPort ?? null);
-  }, [settings.proxyHost, settings.proxyPort]);
+  }, [settings.proxyHost]);
 
   const patch = async (partial: Partial<AppSettings>) => {
     await saveSettings(partial);
@@ -246,14 +370,6 @@ function NetworkSection() {
       return;
     }
     void patch({ proxyHost: next });
-  };
-
-  const savePort = (value: number | null) => {
-    setPort(value);
-    if (value == null || !Number.isFinite(value)) return;
-    const next = Math.min(65535, Math.max(1, Math.round(value)));
-    if (next === settings.proxyPort) return;
-    void patch({ proxyPort: next });
   };
 
   return (
@@ -314,14 +430,13 @@ function NetworkSection() {
             <Divider style={{ margin: "8px 0" }} />
             <div style={rowStyle} className="flex items-center justify-between gap-4">
               <span>{t("settings.proxyPort")}</span>
-              <InputNumber
+              <NumberDraftInput
                 size="small"
                 min={1}
                 max={65535}
-                precision={0}
                 style={{ width: 160 }}
-                value={port}
-                onChange={savePort}
+                value={settings.proxyPort}
+                onCommit={(proxyPort) => void patch({ proxyPort })}
               />
             </div>
           </>
@@ -336,17 +451,13 @@ function NetworkSection() {
               {t("settings.probeTtlHint")}
             </div>
           </div>
-          <InputNumber
+          <NumberDraftInput
             min={1}
             max={1440}
-            precision={0}
             style={{ width: 140 }}
             value={settings.routeProbeTtlMinutes}
             addonAfter={t("settings.probeTtlUnit")}
-            onChange={(v) => {
-              if (v == null || !Number.isFinite(v)) return;
-              void patch({ routeProbeTtlMinutes: Math.min(1440, Math.max(1, Math.round(v))) });
-            }}
+            onCommit={(routeProbeTtlMinutes) => void patch({ routeProbeTtlMinutes })}
           />
         </div>
       </SettingsGroup>
@@ -564,20 +675,14 @@ function AboutSection() {
         <Divider style={{ margin: "8px 0" }} />
         <div style={rowStyle} className="flex items-center justify-between gap-4">
           <span>{t("settings.updateCheckInterval")}</span>
-          <InputNumber
+          <NumberDraftInput
             min={1}
             max={1440}
-            precision={0}
             style={{ width: 140 }}
             value={settings.updateCheckInterval}
             disabled={!settings.autoCheckUpdate}
             addonAfter={t("settings.minutes")}
-            onChange={(v) => {
-              if (v == null || !Number.isFinite(v)) return;
-              void patch({
-                updateCheckInterval: Math.min(1440, Math.max(1, Math.round(v))),
-              });
-            }}
+            onCommit={(updateCheckInterval) => void patch({ updateCheckInterval })}
           />
         </div>
       </SettingsGroup>
