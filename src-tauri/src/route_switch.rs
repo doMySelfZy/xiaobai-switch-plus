@@ -187,6 +187,7 @@ fn run_rewrite(
         None,
         applied_at,
         settings.max_backup_copies,
+        &mut std::collections::HashSet::new(),
     );
     Ok(result)
 }
