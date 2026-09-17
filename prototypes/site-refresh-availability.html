@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>站点列表全局刷新 - 原型</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+      display: flex;
+      height: 600px;
+    }
+
+    /* 左侧站点列表 */
+    .sidebar {
+      width: 320px;
+      border-right: 1px solid #e8e8e8;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 标题栏 - 关键改动区域 */
+    .sidebar-header {
+      padding: 12px;
+      border-bottom: 1px solid #e8e8e8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: white;
+    }
+
+    .sidebar-title {
+      font-weight: 500;
+      font-size: 14px;
+      color: #262626;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* 全局刷新按钮 - 新增 */
+    .refresh-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s;
+      color: #595959;
+    }
+
+    .refresh-btn:hover {
+      background: #f5f5f5;
+      color: #262626;
+    }
+
+    .refresh-btn.loading {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .refresh-btn.loading svg {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .add-btn {
+      padding: 4px 12px;
+      background: #f5f5f5;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: #262626;
+      transition: all 0.2s;
+    }
+
+    .add-btn:hover {
+      background: #e8e8e8;
+    }
+
+    /* 站点列表 */
+    .site-list {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .site-item {
+      padding: 12px;
+      border-bottom: 1px solid #f0f0f0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .site-item:hover {
+      background: #fafafa;
+    }
+
+    .site-item.selected {
+      background: #e6f4ff;
+    }
+
+    /* 状态指示器 - 关键改动区域 */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    /* 绿点 - 可用 (pulsing) */
+    .status-dot.available {
+      background: #52c41a;
+      box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.4);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        box-shadow: 0 0 0 0 rgba(82, 196, 26, 0.4);
+      }
+      50% {
+        box-shadow: 0 0 0 4px rgba(82, 196, 26, 0);
+      }
+    }
+
+    /* 红点 - 不可用 (static) */
+    .status-dot.unavailable {
+      background: #ff4d4f;
+    }
+
+    /* 灰点 - 已禁用 (static) */
+    .status-dot.disabled {
+      background: #d9d9d9;
+    }
+
+    .site-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 14px;
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+
+    .site-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .site-name {
+      font-size: 14px;
+      color: #262626;
+      margin-bottom: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .site-quota {
+      font-size: 12px;
+      color: #8c8c8c;
+    }
+
+    .site-toggle {
+      flex-shrink: 0;
+    }
+
+    /* 开关 */
+    .switch {
+      width: 36px;
+      height: 20px;
+      background: #d9d9d9;
+      border-radius: 10px;
+      position: relative;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    .switch.on {
+      background: #1677ff;
+    }
+
+    .switch::after {
+      content: '';
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.3s;
+    }
+
+    .switch.on::after {
+      transform: translateX(16px);
+    }
+
+    /* 右侧详情 */
+    .detail {
+      flex: 1;
+      padding: 24px;
+      overflow-y: auto;
+    }
+
+    .detail-placeholder {
+      color: #8c8c8c;
+      text-align: center;
+      margin-top: 100px;
+    }
+
+    /* 消息提示 */
+    .message {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 16px;
+      background: white;
+      box-shadow: 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 6px 16px 0 rgba(0, 0, 0, 0.08);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      z-index: 1000;
+      animation: slideDown 0.3s ease;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .message.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translate(-50%, -10px);
+      }
+      to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+    }
+
+    .message.success {
+      color: #52c41a;
+    }
+
+    .message.warning {
+      color: #faad14;
+    }
+
+    /* 控制面板 */
+    .controls {
+      margin-bottom: 20px;
+      padding: 16px;
+      background: #fafafa;
+      border-radius: 8px;
+    }
+
+    .controls h3 {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: #262626;
+    }
+
+    .control-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .control-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .control-btn {
+      padding: 6px 12px;
+      background: white;
+      border: 1px solid #d9d9d9;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .control-btn:hover {
+      border-color: #1677ff;
+      color: #1677ff;
+    }
+
+    .control-label {
+      font-size: 13px;
+      color: #595959;
+    }
+  </style>
+</head>
+<body>
+  <div id="message" class="message"></div>
+
+  <div class="controls">
+    <h3>🎮 原型控制台</h3>
+    <div class="control-row">
+      <button class="control-btn" onclick="simulateRefresh()">模拟点击刷新按钮</button>
+      <button class="control-btn" onclick="toggleSiteAvailability(1)">切换 SHUAI API 状态</button>
+      <button class="control-btn" onclick="toggleSiteAvailability(2)">切换 AiHub 状态</button>
+    </div>
+    <div class="control-row">
+      <span class="control-label">当前状态：SHUAI API 可用 ✅ | AiHub 不可用 ❌ | JustWoker 已禁用 🔘</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="sidebar">
+      <!-- 标题栏 - 新增刷新按钮 -->
+      <div class="sidebar-header">
+        <span class="sidebar-title">上游站点</span>
+        <div class="header-actions">
+          <!-- 全局刷新按钮 - 新增 -->
+          <button id="refreshBtn" class="refresh-btn" title="刷新所有站点" onclick="handleRefreshAll()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
+          <!-- 添加站点按钮 -->
+          <button class="add-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            添加站点
+          </button>
+        </div>
+      </div>
+
+      <!-- 站点列表 -->
+      <div class="site-list" id="siteList">
+        <!-- 站点1: 可用状态 -->
+        <div class="site-item" data-id="1">
+          <div class="status-dot available" title="可用"></div>
+          <div class="site-avatar" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">🐻</div>
+          <div class="site-info">
+            <div class="site-name">SHUAI API</div>
+            <div class="site-quota">剩余 ¥15.55</div>
+          </div>
+          <div class="site-toggle">
+            <div class="switch on"></div>
+          </div>
+        </div>
+
+        <!-- 站点2: 不可用状态 -->
+        <div class="site-item" data-id="2">
+          <div class="status-dot unavailable" title="不可用"></div>
+          <div class="site-avatar" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">A</div>
+          <div class="site-info">
+            <div class="site-name">AiHub</div>
+            <div class="site-quota">获取模型失败</div>
+          </div>
+          <div class="site-toggle">
+            <div class="switch on"></div>
+          </div>
+        </div>
+
+        <!-- 站点3: 已禁用状态 -->
+        <div class="site-item" data-id="3">
+          <div class="status-dot disabled" title="已禁用"></div>
+          <div class="site-avatar" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">🌸</div>
+          <div class="site-info">
+            <div class="site-name">JustWoker</div>
+            <div class="site-quota">--</div>
+          </div>
+          <div class="site-toggle">
+            <div class="switch"></div>
+          </div>
+        </div>
+
+        <!-- 站点4: 可用状态 -->
+        <div class="site-item" data-id="4">
+          <div class="status-dot available" title="可用"></div>
+          <div class="site-avatar" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">🚀</div>
+          <div class="site-info">
+            <div class="site-name">AgentRouter</div>
+            <div class="site-quota">剩余 $25.00</div>
+          </div>
+          <div class="site-toggle">
+            <div class="switch on"></div>
+          </div>
+        </div>
+
+        <!-- 站点5: 可用状态 -->
+        <div class="site-item" data-id="5">
+          <div class="status-dot available" title="可用"></div>
+          <div class="site-avatar" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">⬛</div>
+          <div class="site-info">
+            <div class="site-name">OpenCode</div>
+            <div class="site-quota">无限制</div>
+          </div>
+          <div class="site-toggle">
+            <div class="switch on"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail">
+      <div class="detail-placeholder">选择一个站点查看详情</div>
+    </div>
+  </div>
+
+  <script>
+    let refreshing = false;
+    const sites = {
+      1: { available: true, enabled: true },
+      2: { available: false, enabled: true },
+      3: { available: false, enabled: false },
+      4: { available: true, enabled: true },
+      5: { available: true, enabled: true }
+    };
+
+    function showMessage(text, type = 'success') {
+      const msg = document.getElementById('message');
+      msg.textContent = text;
+      msg.className = `message ${type} show`;
+      
+      setTimeout(() => {
+        msg.classList.remove('show');
+      }, 3000);
+    }
+
+    async function handleRefreshAll() {
+      if (refreshing) return;
+      
+      refreshing = true;
+      const btn = document.getElementById('refreshBtn');
+      btn.classList.add('loading');
+
+      // 模拟刷新过程
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      // 统计结果
+      const enabledSites = Object.entries(sites).filter(([_, s]) => s.enabled);
+      const availableCount = enabledSites.filter(([_, s]) => s.available).length;
+      const unavailableCount = enabledSites.filter(([_, s]) => !s.available).length;
+
+      refreshing = false;
+      btn.classList.remove('loading');
+
+      if (unavailableCount === 0) {
+        showMessage(`已刷新 ${availableCount} 个站点`, 'success');
+      } else {
+        showMessage(`${availableCount} 个站点可用，${unavailableCount} 个站点不可用`, 'warning');
+      }
+    }
+
+    function updateSiteStatus(siteId) {
+      const site = sites[siteId];
+      const item = document.querySelector(`.site-item[data-id="${siteId}"]`);
+      const dot = item.querySelector('.status-dot');
+      const quota = item.querySelector('.site-quota');
+
+      // 更新状态点
+      dot.className = 'status-dot';
+      if (!site.enabled) {
+        dot.classList.add('disabled');
+        dot.title = '已禁用';
+        quota.textContent = '--';
+      } else if (site.available) {
+        dot.classList.add('available');
+        dot.title = '可用';
+      } else {
+        dot.classList.add('unavailable');
+        dot.title = '不可用';
+        quota.textContent = '获取模型失败';
+      }
+    }
+
+    function toggleSiteAvailability(siteId) {
+      const site = sites[siteId];
+      if (site.enabled) {
+        site.available = !site.available;
+        updateSiteStatus(siteId);
+        
+        const siteName = document.querySelector(`.site-item[data-id="${siteId}"] .site-name`).textContent;
+        showMessage(`${siteName} 状态已切换为${site.available ? '可用' : '不可用'}`, 'success');
+      }
+    }
+
+    function simulateRefresh() {
+      handleRefreshAll();
+    }
+
+    // 点击开关切换启用状态
+    document.querySelectorAll('.site-toggle .switch').forEach((sw, index) => {
+      sw.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sw.classList.toggle('on');
+        const siteId = index + 1;
+        sites[siteId].enabled = sw.classList.contains('on');
+        updateSiteStatus(siteId);
+      });
+    });
+  </script>
+</body>
+</html>

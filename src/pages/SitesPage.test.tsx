@@ -572,7 +572,7 @@ describe("SitesPage", () => {
     );
 
     const item = await screen.findByRole("button", { name: /Relay One/ });
-    expect(item.querySelector("[data-status='active']")).toBeTruthy();
+    expect(item.querySelector("[data-status='available']")).toBeTruthy();
     expect(item.querySelector(".ant-badge-status-processing")).toBeTruthy();
 
     await act(async () => {
@@ -580,7 +580,7 @@ describe("SitesPage", () => {
       if (site) await useSiteStore.getState().updateSite(site.id, { enabled: false });
     });
 
-    expect(item.querySelector("[data-status='inactive']")).toBeTruthy();
+    expect(item.querySelector("[data-status='disabled']")).toBeTruthy();
     expect(item.querySelector(".ant-badge-status-default")).toBeTruthy();
   });
 

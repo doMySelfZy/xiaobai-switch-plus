@@ -42,9 +42,24 @@ export function SiteListItem({
   const { token } = theme.useToken();
   // 摘要只基于最近一次成功探测（quotaBySite）；失败/加载态交给右侧详情展示。
   const quota = useSiteStore((s) => s.quotaBySite[site.id]);
+  const modelsBySite = useSiteStore((s) => s.modelsBySite);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: site.id,
   });
+
+  // 判断站点可用性：已启用 + 有模型 = 可用
+  const hasModels = modelsBySite[site.id]?.length > 0;
+  const siteStatus = !site.enabled 
+    ? "disabled" 
+    : hasModels 
+      ? "available" 
+      : "unavailable";
+  
+  const statusTitle = !site.enabled
+    ? t("sites.disabled")
+    : hasModels
+      ? t("sites.available")
+      : t("sites.unavailable");
 
   const menu: MenuProps = {
     items: [
@@ -226,8 +241,8 @@ export function SiteListItem({
               <div className="flex min-w-0 items-center gap-1.5">
                 <StatusDot
                   className="shrink-0"
-                  active={site.enabled}
-                  title={site.enabled ? t("sites.enabled") : t("sites.disabled")}
+                  status={siteStatus}
+                  title={statusTitle}
                 />
                 <div className="truncate text-sm font-medium">{site.name}</div>
               </div>

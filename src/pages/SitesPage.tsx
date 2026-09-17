@@ -233,6 +233,57 @@ export function SitesPage() {
     }
   }, [selected, probeQuota, message, t]);
 
+  // 全局刷新：批量刷新所有站点的模型列表（带重试）
+  const [refreshingAll, setRefreshingAll] = useState(false);
+
+  const handleRefreshAll = useCallback(async () => {
+    if (refreshingAll) return;
+    
+    setRefreshingAll(true);
+    
+    // 只刷新已启用的站点
+    const enabledSites = sites.filter(s => s.enabled);
+    
+    // 带重试的刷新函数
+    const fetchWithRetry = async (site: Site, maxRetries = 2): Promise<boolean> => {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          await fetchModels(site.id);
+          return true;
+        } catch (e) {
+          if (attempt === maxRetries) {
+            return false;
+          }
+          // 等待后重试
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+      return false;
+    };
+
+    // 并行刷新所有站点
+    const results = await Promise.all(
+      enabledSites.map(site => fetchWithRetry(site))
+    );
+
+    setRefreshingAll(false);
+
+    // 统计结果
+    const successCount = results.filter(r => r).length;
+    const failureCount = results.filter(r => !r).length;
+
+    if (failureCount === 0) {
+      message.success(t("sites.refreshAllSuccess", { count: successCount }));
+    } else {
+      message.warning(
+        t("sites.refreshAllPartial", { 
+          available: successCount, 
+          unavailable: failureCount 
+        })
+      );
+    }
+  }, [refreshingAll, sites, fetchModels, message, t]);
+
   const handleSiteSaved = useCallback(
     (site: Site, isCreate: boolean) => {
       setSelectedSiteId(site.id);
@@ -456,14 +507,26 @@ export function SitesPage() {
       >
         <div className="flex items-center justify-between p-3">
           <span className="font-medium">{t("sites.title")}</span>
-          <Button
-            color="default"
-            size="small"
-            icon={<Plus size={14} />}
-            onClick={openCreateForm}
-          >
-            {t("sites.add")}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Tooltip title={t("sites.refreshAll")}>
+              <Button
+                type="text"
+                size="small"
+                loading={refreshingAll}
+                icon={<RefreshCw size={14} />}
+                onClick={() => void handleRefreshAll()}
+                aria-label={t("sites.refreshAll")}
+              />
+            </Tooltip>
+            <Button
+              color="default"
+              size="small"
+              icon={<Plus size={14} />}
+              onClick={openCreateForm}
+            >
+              {t("sites.add")}
+            </Button>
+          </div>
         </div>
         <div className="scroll-y flex flex-1 flex-col gap-2 px-2 pb-2">
           <DndContext

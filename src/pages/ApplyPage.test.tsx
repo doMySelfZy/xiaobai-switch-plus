@@ -154,11 +154,11 @@ describe("ApplyPage target switch", () => {
     );
 
     const claude = await screen.findByRole("menuitem", { name: "Claude Code" });
-    expect(claude.querySelector("[data-status='active']")).toBeTruthy();
+    expect(claude.querySelector("[data-status='available']")).toBeTruthy();
     expect(claude.querySelector(".ant-badge-status-processing")).toBeTruthy();
 
     const codex = screen.getByRole("menuitem", { name: "Codex" });
-    expect(codex.querySelector("[data-status='inactive']")).toBeTruthy();
+    expect(codex.querySelector("[data-status='disabled']")).toBeTruthy();
     expect(codex.querySelector(".ant-badge-status-default")).toBeTruthy();
   });
 });
