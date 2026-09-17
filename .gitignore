@@ -21,3 +21,7 @@ coverage
 # Mimosa 本地钩子状态（会话级，不入库）
 .mimosa/
 .claude/settings.local.json
+
+# ZCode 会话级钩子状态与 Playwright 临时产物（不入库）
+.zcode/
+.playwright-mcp/

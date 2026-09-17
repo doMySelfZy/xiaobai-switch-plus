@@ -21,13 +21,14 @@ describe("GoApplyButton", () => {
 
   it("rotates the target label while the sites page is visible", () => {
     render(<GoApplyButton onApply={() => undefined} />);
-    expect(screen.getByText("去 Claude Code 应用")).toBeInTheDocument();
+    expect(screen.getByText("去 Agent 应用")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(CYCLE_MS + FADE_MS);
     });
 
-    expect(screen.getByText("去 Codex 应用")).toBeInTheDocument();
+    // 文案现在是固定的"去 Agent 应用"，不再轮换
+    expect(screen.getByText("去 Agent 应用")).toBeInTheDocument();
   });
 
   it("does not run the rotation timer while the sites page is hidden", () => {
@@ -41,7 +42,7 @@ describe("GoApplyButton", () => {
     act(() => {
       vi.advanceTimersByTime(CYCLE_MS * 10);
     });
-    expect(screen.getByText("去 Claude Code 应用")).toBeInTheDocument();
+    expect(screen.getByText("去 Agent 应用")).toBeInTheDocument();
 
     // 切回站点页：轮换恢复。
     act(() => {
@@ -50,6 +51,6 @@ describe("GoApplyButton", () => {
     act(() => {
       vi.advanceTimersByTime(CYCLE_MS + FADE_MS);
     });
-    expect(screen.getByText("去 Codex 应用")).toBeInTheDocument();
+    expect(screen.getByText("去 Agent 应用")).toBeInTheDocument();
   });
 });

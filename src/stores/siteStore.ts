@@ -365,6 +365,8 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       if (!apiKeyId || activeApiKeyId(current ?? null) === apiKeyId) {
         set({
           error: msg,
+          // 清空模型列表，让站点显示为不可用（红点）
+          modelsBySite: { ...get().modelsBySite, [siteId]: [] },
           sites: get().sites.map((s) =>
             s.id === siteId ? { ...s, lastModelFetchError: msg } : s,
           ),

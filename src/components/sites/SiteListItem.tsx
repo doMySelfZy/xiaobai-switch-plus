@@ -47,17 +47,18 @@ export function SiteListItem({
     id: site.id,
   });
 
-  // 判断站点可用性：已启用 + 有模型 = 可用
+  // 判断站点可用性：已启用 + 有模型 + 无获取错误 = 可用
   const hasModels = modelsBySite[site.id]?.length > 0;
+  const hasError = site.lastModelFetchError !== null;
   const siteStatus = !site.enabled 
     ? "disabled" 
-    : hasModels 
+    : hasModels && !hasError
       ? "available" 
       : "unavailable";
   
   const statusTitle = !site.enabled
     ? t("sites.disabled")
-    : hasModels
+    : hasModels && !hasError
       ? t("sites.available")
       : t("sites.unavailable");
 
@@ -182,6 +183,26 @@ export function SiteListItem({
             {t("sites.quotaRemaining", { amount })}
           </span>
         </Tooltip>
+      );
+    }
+  } else if (quota?.status) {
+    // 显示额度获取失败/不支持等状态的占位文字
+    const statusTextMap: Record<string, string> = {
+      unsupported: t("sites.quotaUnsupported"),
+      unauthorized: t("sites.quotaUnauthorized"),
+      invalid_data: t("sites.quotaInvalidData"),
+      error: t("sites.quotaError"),
+    };
+    const statusText = statusTextMap[quota.status];
+    if (statusText) {
+      quotaSummary = (
+        <span
+          className="block truncate text-xs"
+          style={{ color: token.colorTextQuaternary }}
+          data-testid="site-quota-status-placeholder"
+        >
+          {statusText}
+        </span>
       );
     }
   }

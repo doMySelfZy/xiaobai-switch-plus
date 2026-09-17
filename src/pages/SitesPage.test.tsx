@@ -119,7 +119,7 @@ describe("SitesPage", () => {
     expect(multiBtn.compareDocumentPosition(testBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(testBtn.compareDocumentPosition(clearBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    const applyBtn = screen.getByRole("button", { name: /去 Claude Code 应用|去 Codex 应用/ });
+    const applyBtn = screen.getByRole("button", { name: /去 Agent 应用/ });
     expect(applyBtn.className).toMatch(/ant-btn-sm/);
     const detailName = document.querySelector(".text-base.font-medium");
     expect(detailName?.textContent).toBe("Relay One");

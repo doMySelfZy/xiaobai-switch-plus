@@ -277,8 +277,8 @@ export function SitesPage() {
     } else {
       message.warning(
         t("sites.refreshAllPartial", { 
-          available: successCount, 
-          unavailable: failureCount 
+          success: successCount, 
+          total: enabledSites.length 
         })
       );
     }
@@ -574,10 +574,10 @@ export function SitesPage() {
                   <div className="shrink-0">
                     <GoApplyButton
                       disabled={!selected.selectedModelId || !selected.enabled}
-                      onApply={(tab) => {
+                      onApply={() => {
                         setSelectedSiteId(selected.id);
                         setApplyPrefillSiteId(selected.id);
-                        setApplyTab(tab);
+                        setApplyTab("claude_code");
                         setPage("apply");
                       }}
                     />
