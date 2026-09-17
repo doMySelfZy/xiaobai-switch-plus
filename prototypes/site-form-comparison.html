@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>添加站点表单 - 改进对比原型</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+      color: #F8FAFC;
+      padding: 32px 16px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 12px;
+      font-size: 28px;
+      font-weight: 600;
+      color: #F8FAFC;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #94A3B8;
+      margin-bottom: 40px;
+      font-size: 14px;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 40px;
+    }
+
+    @media (max-width: 1024px) {
+      .comparison {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: #1E293B;
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 20px 24px;
+      background: rgba(15, 23, 42, 0.5);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #F8FAFC;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .badge-old {
+      background: rgba(239, 68, 68, 0.1);
+      color: #FCA5A5;
+      border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .badge-new {
+      background: rgba(34, 197, 94, 0.1);
+      color: #86EFAC;
+      border: 1px solid rgba(34, 197, 94, 0.2);
+    }
+
+    .panel-body {
+      padding: 24px;
+    }
+
+    /* Modal simulation */
+    .modal {
+      background: #1E293B;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      font-size: 16px;
+      font-weight: 600;
+      color: #F8FAFC;
+    }
+
+    .modal-content {
+      padding: 20px;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .modal-footer {
+      padding: 12px 20px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    /* Form elements */
+    .form-item {
+      margin-bottom: 16px;
+    }
+
+    .form-label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #F8FAFC;
+      font-weight: 500;
+    }
+
+    .form-label-required::after {
+      content: '*';
+      color: #F87171;
+      margin-left: 4px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 8px 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      color: #F8FAFC;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .form-input:focus {
+      outline: none;
+      border-color: #38BDF8;
+      background: rgba(15, 23, 42, 0.8);
+    }
+
+    .form-input::placeholder {
+      color: #64748B;
+    }
+
+    .form-extra {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #94A3B8;
+    }
+
+    .form-icon-hint {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #94A3B8;
+      margin-left: 6px;
+    }
+
+    /* Button */
+    .btn {
+      padding: 6px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary {
+      background: #38BDF8;
+      color: #0F172A;
+    }
+
+    .btn-primary:hover {
+      background: #0EA5E9;
+      transform: translateY(-1px);
+    }
+
+    .btn-default {
+      background: rgba(148, 163, 184, 0.1);
+      color: #F8FAFC;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .btn-default:hover {
+      background: rgba(148, 163, 184, 0.2);
+    }
+
+    .btn-small {
+      padding: 4px 12px;
+      font-size: 12px;
+    }
+
+    .btn-link {
+      background: none;
+      color: #38BDF8;
+      padding: 0;
+      text-decoration: none;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .btn-link:hover {
+      color: #0EA5E9;
+      text-decoration: underline;
+    }
+
+    /* Collapse */
+    .collapse {
+      margin-bottom: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+      border-radius: 6px;
+      background: rgba(15, 23, 42, 0.3);
+    }
+
+    .collapse-header {
+      padding: 10px 14px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #CBD5E1;
+      user-select: none;
+      transition: background 0.2s;
+    }
+
+    .collapse-header:hover {
+      background: rgba(148, 163, 184, 0.05);
+    }
+
+    .collapse-icon {
+      width: 14px;
+      height: 14px;
+      transition: transform 0.2s;
+    }
+
+    .collapse-open .collapse-icon {
+      transform: rotate(90deg);
+    }
+
+    .collapse-content {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+
+    .collapse-open .collapse-content {
+      max-height: 2000px;
+    }
+
+    .collapse-body {
+      padding: 14px;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    /* Divider */
+    .divider {
+      margin: 20px 0;
+      border: none;
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      position: relative;
+    }
+
+    .divider-text {
+      position: absolute;
+      top: -10px;
+      left: 0;
+      background: rgba(15, 23, 42, 0.3);
+      padding: 0 8px;
+      font-size: 11px;
+      color: #94A3B8;
+      font-weight: 500;
+    }
+
+    /* Section */
+    .section-title {
+      font-size: 12px;
+      color: #94A3B8;
+      font-weight: 600;
+      margin-bottom: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .section-box {
+      background: rgba(15, 23, 42, 0.3);
+      border: 1px dashed rgba(148, 163, 184, 0.15);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    /* Checkbox */
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: #CBD5E1;
+    }
+
+    .checkbox input {
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+
+    /* Select */
+    .form-select {
+      width: 100%;
+      padding: 8px 32px 8px 12px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      color: #F8FAFC;
+      font-size: 13px;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2394A3B8' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+    }
+
+    /* Annotations */
+    .annotation {
+      position: absolute;
+      background: #F97316;
+      color: white;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    .annotation::after {
+      content: '';
+      position: absolute;
+      width: 0;
+      height: 0;
+      border-style: solid;
+    }
+
+    .annotation-left::after {
+      right: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      border-width: 4px 4px 4px 0;
+      border-color: transparent #F97316 transparent transparent;
+    }
+
+    .annotation-right::after {
+      left: 100%;
+      top: 50%;
+      transform: translateY(-50%);
+      border-width: 4px 0 4px 4px;
+      border-color: transparent transparent transparent #F97316;
+    }
+
+    /* Problem markers */
+    .problem-marker {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      background: #EF4444;
+      color: white;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 20px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+
+    /* Improvement markers */
+    .improvement-marker {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      background: #22C55E;
+      color: white;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 20px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 6px;
+    }
+
+    /* Key-value editor */
+    .kv-editor {
+      margin-top: 12px;
+    }
+
+    .kv-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 32px;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .kv-row input {
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+
+    .kv-delete {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 6px;
+      color: #FCA5A5;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+
+    .kv-delete:hover {
+      background: rgba(239, 68, 68, 0.2);
+    }
+
+    /* Summary section */
+    .summary {
+      background: rgba(56, 189, 248, 0.05);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 8px;
+      padding: 20px;
+      margin-top: 32px;
+    }
+
+    .summary-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #38BDF8;
+      margin-bottom: 12px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .summary-item {
+      background: rgba(15, 23, 42, 0.5);
+      padding: 12px;
+      border-radius: 6px;
+      border: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .summary-label {
+      font-size: 11px;
+      color: #94A3B8;
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .summary-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: #F8FAFC;
+    }
+
+    .summary-value.positive {
+      color: #22C55E;
+    }
+
+    .summary-value.negative {
+      color: #EF4444;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(15, 23, 42, 0.5);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.3);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.5);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>添加站点表单 - 改进对比原型</h1>
+    <p class="subtitle">左侧为当前版本（存在问题），右侧为改进版本（方案 A）</p>
+
+    <div class="comparison">
+      <!-- 当前版本 -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">当前版本</span>
+          <span class="badge badge-old">
+            <span>❌</span>
+            <span>存在问题</span>
+          </span>
+        </div>
+        <div class="panel-body">
+          <div class="modal">
+            <div class="modal-header">添加站点</div>
+            <div class="modal-content">
+              <form>
+                <div class="form-item">
+                  <label class="form-label form-label-required">显示名称</label>
+                  <input type="text" class="form-input" placeholder="My Relay">
+                </div>
+
+                <div class="form-item">
+                  <label class="form-label form-label-required">Base URL</label>
+                  <input type="text" class="form-input" placeholder="https://api.example.com">
+                  <div class="form-extra">主要线路，写入到目标时优先使用</div>
+                  <button type="button" class="btn-link" style="margin-top: 6px;">+ 添加线路</button>
+                </div>
+
+                <div class="form-item">
+                  <label class="form-label form-label-required">API Key</label>
+                  <input type="password" class="form-input" placeholder="sk-...">
+                  <div class="form-extra">主密钥，写入到目标时优先使用</div>
+                  <button type="button" class="btn-link" style="margin-top: 6px;">+ 添加密钥</button>
+                </div>
+
+                <!-- 高级配置 Collapse -->
+                <div class="collapse" id="collapse-old-advanced">
+                  <div class="collapse-header" onclick="toggleCollapse('collapse-old-advanced')">
+                    <svg class="collapse-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span>高级配置</span>
+                    <span class="problem-marker">1</span>
+                  </div>
+                  <div class="collapse-content">
+                    <div class="collapse-body">
+                      <!-- 站点信息 -->
+                      <hr class="divider">
+                        <span class="divider-text">站点信息</span>
+                      </hr>
+                      <span class="problem-marker" style="position: absolute; margin-left: -24px;">2</span>
+
+                      <div class="form-item">
+                        <label class="form-label">连接协议</label>
+                        <span class="problem-marker">3</span>
+                        <select class="form-select">
+                          <option>OpenAI Compatible</option>
+                          <option>Anthropic</option>
+                        </select>
+                        <div class="form-extra">留空则在写入时自动检测</div>
+                      </div>
+
+                      <div style="margin-bottom: 12px;">
+                        <button type="button" class="btn btn-small btn-default">测试连接</button>
+                      </div>
+
+                      <div class="form-item">
+                        <label class="form-label">写入预览</label>
+                        <select class="form-select">
+                          <option>使用站点图标</option>
+                          <option>使用自定义图标</option>
+                        </select>
+                      </div>
+
+                      <!-- 代理配置 -->
+                      <hr class="divider">
+                        <span class="divider-text">代理配置</span>
+                      </hr>
+                      <span class="problem-marker" style="position: absolute; margin-left: -24px;">4</span>
+
+                      <div class="form-item">
+                        <label class="form-label">NewAPI 令牌</label>
+                        <input type="password" class="form-input" placeholder="Access Token">
+                        <div class="form-extra">NewAPI 中转站专用</div>
+                      </div>
+
+                      <div class="form-item">
+                        <label class="form-label">HTTP 头部</label>
+                        <textarea class="form-input" rows="4" placeholder='{"Authorization": "Bearer xxx"}'></textarea>
+                        <div class="form-extra">JSON 格式的自定义请求头</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Codex 私有能力 -->
+                <div class="collapse" id="collapse-old-codex">
+                  <div class="collapse-header" onclick="toggleCollapse('collapse-old-codex')">
+                    <svg class="collapse-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span>Codex 私有能力</span>
+                  </div>
+                  <div class="collapse-content">
+                    <div class="collapse-body">
+                      <div class="checkbox">
+                        <input type="checkbox" checked>
+                        <label>支持工具调用</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox" checked>
+                        <label>支持流式响应</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox">
+                        <label>支持提示缓存</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox">
+                        <label>支持计算机使用</label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-default">取消</button>
+              <button type="button" class="btn btn-primary">保存</button>
+            </div>
+          </div>
+
+          <!-- 问题标注 -->
+          <div style="margin-top: 24px; padding: 16px; background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px;">
+            <div style="font-size: 13px; font-weight: 600; color: #FCA5A5; margin-bottom: 8px;">存在的问题：</div>
+            <div style="font-size: 12px; color: #CBD5E1; line-height: 1.6;">
+              <div style="margin-bottom: 4px;"><span class="problem-marker">1</span> 重要配置被折叠隐藏</div>
+              <div style="margin-bottom: 4px;"><span class="problem-marker">2</span> 语义重复，层级混乱</div>
+              <div style="margin-bottom: 4px;"><span class="problem-marker">3</span> 关键字段不显眼</div>
+              <div><span class="problem-marker">4</span> 又一层内部分组</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 改进版本 -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">改进版本（方案 A）</span>
+          <span class="badge badge-new">
+            <span>✓</span>
+            <span>推荐方案</span>
+          </span>
+        </div>
+        <div class="panel-body">
+          <div class="modal">
+            <div class="modal-header">添加站点</div>
+            <div class="modal-content">
+              <form>
+                <!-- 基础信息 -->
+                <div class="section-box">
+                  <div class="section-title">基础信息</div>
+                  <span class="improvement-marker" style="position: absolute; margin-left: -30px;">✓</span>
+
+                  <div class="form-item">
+                    <label class="form-label form-label-required">显示名称</label>
+                    <input type="text" class="form-input" placeholder="My Relay">
+                  </div>
+
+                  <div class="form-item">
+                    <label class="form-label form-label-required">
+                      Base URL
+                      <span class="form-icon-hint">ℹ️ 可添加多个备用线路</span>
+                    </label>
+                    <input type="text" class="form-input" placeholder="https://api.example.com">
+                    <button type="button" class="btn-link" style="margin-top: 6px;">+ 添加线路</button>
+                  </div>
+
+                  <div class="form-item">
+                    <label class="form-label form-label-required">
+                      API Key
+                      <span class="form-icon-hint">ℹ️ 支持多密钥轮换</span>
+                    </label>
+                    <input type="password" class="form-input" placeholder="sk-...">
+                    <button type="button" class="btn-link" style="margin-top: 6px;">+ 添加密钥</button>
+                  </div>
+
+                  <div class="form-item" style="margin-bottom: 0;">
+                    <label class="form-label">
+                      连接协议
+                      <span class="improvement-marker">✓</span>
+                      <span class="form-icon-hint">ℹ️ 不确定时可留空，点击"测试连接"自动检测</span>
+                    </label>
+                    <select class="form-select">
+                      <option value="">自动检测</option>
+                      <option>OpenAI Compatible</option>
+                      <option>Anthropic</option>
+                    </select>
+                  </div>
+
+                  <div style="margin-top: 12px;">
+                    <button type="button" class="btn btn-small btn-primary">
+                      测试连接
+                      <span class="improvement-marker">✓</span>
+                    </button>
+                    <span style="font-size: 12px; color: #94A3B8; margin-left: 8px;">测试 Base URL 可达性和协议</span>
+                  </div>
+                </div>
+
+                <!-- 可选配置 -->
+                <div class="collapse collapse-open" id="collapse-new-optional">
+                  <div class="collapse-header" onclick="toggleCollapse('collapse-new-optional')">
+                    <svg class="collapse-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span>可选配置</span>
+                    <span class="improvement-marker">✓</span>
+                  </div>
+                  <div class="collapse-content">
+                    <div class="collapse-body">
+                      <div class="form-item">
+                        <label class="form-label">写入预览</label>
+                        <select class="form-select">
+                          <option>使用站点图标</option>
+                          <option>使用自定义图标</option>
+                        </select>
+                      </div>
+
+                      <div class="form-item">
+                        <label class="form-label">
+                          NewAPI 中转令牌 (可选)
+                          <span class="improvement-marker">✓</span>
+                        </label>
+                        <input type="password" class="form-input" placeholder="Access Token">
+                        <div class="form-extra">ℹ️ 仅通过 NewAPI 代理时需要</div>
+                      </div>
+
+                      <div class="form-item" style="margin-bottom: 0;">
+                        <div class="checkbox">
+                          <input type="checkbox" id="enable-headers-new" onchange="toggleHeaderEditor('headers-editor-new', this.checked)">
+                          <label for="enable-headers-new">
+                            启用自定义 HTTP 头部 (高级)
+                            <span class="improvement-marker">✓</span>
+                          </label>
+                        </div>
+                        <div id="headers-editor-new" class="kv-editor" style="display: none;">
+                          <div style="display: grid; grid-template-columns: 1fr 1fr 32px; gap: 8px; margin-bottom: 6px; font-size: 11px; color: #94A3B8;">
+                            <div>键名</div>
+                            <div>值</div>
+                            <div></div>
+                          </div>
+                          <div class="kv-row">
+                            <input type="text" class="form-input" placeholder="Authorization">
+                            <input type="text" class="form-input" placeholder="Bearer xxx">
+                            <div class="kv-delete">×</div>
+                          </div>
+                          <button type="button" class="btn-link">+ 添加头部</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Codex 高级能力 -->
+                <div class="collapse" id="collapse-new-codex">
+                  <div class="collapse-header" onclick="toggleCollapse('collapse-new-codex')">
+                    <svg class="collapse-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                    </svg>
+                    <span>Codex 高级能力</span>
+                    <span class="improvement-marker">✓</span>
+                  </div>
+                  <div class="collapse-content">
+                    <div class="collapse-body">
+                      <div class="checkbox">
+                        <input type="checkbox" checked>
+                        <label>支持工具调用 (Function Calling)</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox" checked>
+                        <label>支持流式响应 (Streaming)</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox">
+                        <label>支持提示缓存 (Prompt Caching)</label>
+                      </div>
+                      <div class="checkbox">
+                        <input type="checkbox">
+                        <label>支持计算机使用 (Computer Use)</label>
+                      </div>
+                      <div class="form-extra" style="margin-top: 12px;">
+                        ℹ️ 通常保持默认即可，除非明确知道站点不支持某些特性
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </form>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-default">取消</button>
+              <button type="button" class="btn btn-primary">
+                测试并保存
+                <span class="improvement-marker">✓</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 改进标注 -->
+          <div style="margin-top: 24px; padding: 16px; background: rgba(34, 197, 94, 0.05); border: 1px solid rgba(34, 197, 94, 0.2); border-radius: 6px;">
+            <div style="font-size: 13px; font-weight: 600; color: #86EFAC; margin-bottom: 8px;">关键改进：</div>
+            <div style="font-size: 12px; color: #CBD5E1; line-height: 1.6;">
+              <div style="margin-bottom: 4px;"><span class="improvement-marker">✓</span> 提升"连接协议"到基础区</div>
+              <div style="margin-bottom: 4px;"><span class="improvement-marker">✓</span> "测试连接"更显眼</div>
+              <div style="margin-bottom: 4px;"><span class="improvement-marker">✓</span> 移除内部分隔线，扁平化</div>
+              <div style="margin-bottom: 4px;"><span class="improvement-marker">✓</span> "高级配置" → "可选配置"</div>
+              <div style="margin-bottom: 4px;"><span class="improvement-marker">✓</span> HTTP 头部改为键值对编辑器</div>
+              <div><span class="improvement-marker">✓</span> 添加友好的说明文字</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 对比总结 -->
+    <div class="summary">
+      <div class="summary-title">改进效果总结</div>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="summary-label">操作步骤</div>
+          <div class="summary-value positive">7步 → 5步</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">信息层级</div>
+          <div class="summary-value positive">3层 → 2层</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">折叠层数</div>
+          <div class="summary-value positive">2个 → 2个</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">内部分隔线</div>
+          <div class="summary-value positive">2个 → 0个</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">预估工作量</div>
+          <div class="summary-value">约 2 小时</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-label">实施风险</div>
+          <div class="summary-value positive">低</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function toggleCollapse(id) {
+      const collapse = document.getElementById(id);
+      collapse.classList.toggle('collapse-open');
+    }
+
+    function toggleHeaderEditor(id, show) {
+      const editor = document.getElementById(id);
+      editor.style.display = show ? 'block' : 'none';
+    }
+
+    // Auto-open the optional section in the new version
+    document.addEventListener('DOMContentLoaded', () => {
+      const newOptional = document.getElementById('collapse-new-optional');
+      if (newOptional) {
+        newOptional.classList.add('collapse-open');
+      }
+    });
+  </script>
+</body>
+</html>

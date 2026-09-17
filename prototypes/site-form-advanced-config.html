@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>添加站点 · 高级配置复刻与调整</title>
+<style>
+  /* 复刻实际 antd 浅色界面 token */
+  :root{
+    --bg:#ffffff; --text:rgba(0,0,0,.88); --text2:rgba(0,0,0,.65);
+    --text3:rgba(0,0,0,.45); --border:#d9d9d9; --split:#f0f0f0;
+    --primary:#1677ff; --primary-bg:#e6f4ff; --radius:8px;
+    --fill:#fafafa; --fill2:#f5f5f5;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:#e9ebf0; color:var(--text); font-size:14px; line-height:1.5714;
+    padding:28px 16px;
+  }
+  .stage{max-width:1180px;margin:0 auto}
+  .stage > h1{font-size:18px;font-weight:600;margin-bottom:4px}
+  .stage > p.lead{color:var(--text3);margin-bottom:22px;font-size:13px}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+
+  .col-label{font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;
+    letter-spacing:.04em;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:10px}
+  .tag.now{background:#fff1f0;color:#cf1322;border:1px solid #ffccc7}
+  .tag.next{background:#f6ffed;color:#389e0d;border:1px solid #b7eb8f}
+
+  /* Modal 复刻 */
+  .modal{background:var(--bg);border-radius:var(--radius);box-shadow:0 6px 16px rgba(0,0,0,.08),0 3px 6px -4px rgba(0,0,0,.12);
+    overflow:hidden;border:1px solid rgba(0,0,0,.04)}
+  .modal-head{padding:16px 24px;font-size:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  .modal-head .x{color:var(--text3);cursor:pointer;font-size:16px}
+  .modal-body{padding:4px 24px 8px;max-height:560px;overflow:auto}
+  .modal-foot{padding:12px 24px;border-top:1px solid var(--split);display:flex;justify-content:flex-end;gap:8px}
+
+  .fi{margin-bottom:16px}
+  .fl{display:block;margin-bottom:6px;color:var(--text);font-size:14px}
+  .fl .req{color:#ff4d4f;margin-left:2px}
+  .fl .info{display:inline-flex;width:14px;height:14px;border:1px solid var(--text3);border-radius:50%;
+    color:var(--text3);font-size:10px;align-items:center;justify-content:center;margin-left:4px;cursor:help}
+  .inp{width:100%;height:32px;padding:4px 11px;border:1px solid var(--border);border-radius:6px;
+    font-size:14px;color:var(--text);background:var(--bg);outline:none}
+  .inp:focus{border-color:var(--primary);box-shadow:0 0 0 2px rgba(22,119,255,.1)}
+  .inp::placeholder{color:rgba(0,0,0,.25)}
+  .hint{font-size:12px;color:var(--text3);margin-top:4px}
+  .row{display:flex;align-items:center;gap:8px}
+  .row .inp{flex:1}
+  .mini{width:28px;height:28px;border:1px solid var(--border);border-radius:6px;background:var(--bg);
+    color:var(--text2);cursor:pointer;font-size:16px;line-height:1;display:inline-flex;align-items:center;justify-content:center}
+  .mini.grip{border:none;color:var(--text3);cursor:grab;width:18px}
+  .mini.danger:hover{color:#ff4d4f;border-color:#ff7875}
+  .mini:hover{color:var(--primary);border-color:var(--primary)}
+
+  /* Collapse 复刻 */
+  .collapse{border:1px solid #d9d9d9;border-radius:var(--radius);margin-bottom:12px;background:var(--fill)}
+  .collapse-head{padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-weight:500;user-select:none}
+  .caret{width:0;height:0;border-left:5px solid var(--text3);border-top:4px solid transparent;border-bottom:4px solid transparent;
+    transition:transform .2s;flex-shrink:0}
+  .collapse.open .caret{transform:rotate(90deg)}
+  .collapse-body{display:none;padding:12px;border-top:1px solid #d9d9d9;background:var(--bg)}
+  .collapse.open .collapse-body{display:block}
+
+  /* Divider（当前版本内部用的） */
+  .divider{display:flex;align-items:center;gap:10px;margin:6px 0 14px;color:var(--text2);font-size:12px}
+  .divider::before,.divider::after{content:"";height:1px;background:var(--split);flex:1}
+  .divider::before{flex:0 0 auto;width:0}
+  .divider span{white-space:nowrap}
+
+  /* Select */
+  .sel{width:100%;height:32px;padding:4px 28px 4px 11px;border:1px solid var(--border);border-radius:6px;
+    background:var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23bfbfbf' d='M6 8L2 4h8z'/%3E%3C/svg%3E") no-repeat right 10px center;
+    appearance:none;font-size:14px;color:var(--text)}
+
+  /* Button */
+  .btn{height:32px;padding:0 15px;border-radius:6px;border:1px solid var(--border);background:var(--bg);
+    color:var(--text);cursor:pointer;font-size:14px;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{color:var(--primary);border-color:var(--primary)}
+  .btn.sm{height:26px;padding:0 10px;font-size:13px}
+  .btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+  .btn.primary:hover{background:#4096ff;color:#fff}
+  .btn.text{border:none;background:transparent;color:var(--primary);padding:0 6px}
+  .btn.text:hover{background:rgba(22,119,255,.06)}
+
+  .btn-link{color:var(--primary);cursor:pointer;font-size:13px;user-select:none}
+  .btn-link:hover{color:#4096ff}
+
+  /* Switch */
+  .sw{width:36px;height:20px;border-radius:10px;background:rgba(0,0,0,.25);position:relative;cursor:pointer;transition:.2s;flex-shrink:0}
+  .sw.on{background:var(--primary)}
+  .sw::after{content:"";position:absolute;width:16px;height:16px;background:#fff;border-radius:50%;top:2px;left:2px;transition:.2s}
+  .sw.on::after{left:18px}
+
+  .check{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:14px}
+  .check input{margin-top:3px;width:16px;height:16px;accent-color:var(--primary)}
+  .check .sub{font-size:12px;color:var(--text3)}
+  .cap-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:6px 0}
+  .cap-row .sub{font-size:12px;color:var(--text3)}
+  .cap-div{height:1px;background:var(--split);margin:8px 0}
+
+  /* 改进版：可选配置内的键值编辑器 */
+  .kv{border:1px solid var(--split);border-radius:6px;padding:10px;background:var(--fill)}
+  .kv-row{display:grid;grid-template-columns:1fr 1fr 28px;gap:8px;margin-bottom:8px}
+  .kv-row .inp{height:28px;font-size:13px}
+
+  /* 改进版：基础信息里内联协议+测试 */
+  .inline-test{display:flex;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+  .result{font-size:12px;color:#389e0d}
+  .result.err{color:#cf1322}
+
+  .note{margin-top:18px;background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;padding:12px 14px;font-size:13px;color:#614700}
+  .note b{color:#ad6800}
+  .diff{font-size:12px;color:var(--text3);margin-top:6px;line-height:1.7}
+  .diff .add{color:#389e0d}
+  .diff .del{color:#cf1322;text-decoration:line-through}
+</style>
+</head>
+<body>
+<div class="stage">
+  <h1>添加站点 · 高级配置</h1>
+  <p class="lead">左＝当前实际界面复刻；右＝按你反馈"高级配置里感觉不好"做的调整。点标题可展开/收起。</p>
+
+  <div class="grid">
+
+    <!-- ===== 当前版本 ===== -->
+    <div>
+      <div class="col-label">当前 <span class="tag now">现状</span></div>
+      <div class="modal">
+        <div class="modal-head">添加站点 <span class="x">✕</span></div>
+        <div class="modal-body">
+          <div class="fi"><label class="fl">显示名称<span class="req">*</span></label><input class="inp" placeholder="My Relay"></div>
+          <div class="fi">
+            <label class="fl">Base URL<span class="info">i</span></label>
+            <div class="row"><span class="mini grip">⠿</span><input class="inp" placeholder="https://api.example.com"><button class="mini">+</button><button class="mini danger">−</button></div>
+            <div class="hint">第一项为当前 / 默认线路</div>
+          </div>
+          <div class="fi">
+            <label class="fl">API Key<span class="req">*</span></label>
+            <div class="row"><input class="inp" style="max-width:110px" placeholder="例如密…"><input class="inp" placeholder="sk-…"><button class="mini">+</button><button class="mini danger">−</button></div>
+            <div class="hint">可一次添加多个密钥，第一项为当前密钥</div>
+          </div>
+
+          <div class="collapse open" id="c-now-adv">
+            <div class="collapse-head" onclick="toggle('c-now-adv')"><span class="caret"></span>高级配置</div>
+            <div class="collapse-body">
+              <div class="divider"><span>站点信息</span></div>
+              <div class="fi">
+                <label class="fl">连接协议</label>
+                <select class="sel"><option>（留空自动检测）</option><option>OpenAI 兼容</option><option>Anthropic</option></select>
+                <div class="hint">不确定时可留空，点击下方「测试连接」自动检测</div>
+              </div>
+              <div class="fi"><button class="btn sm">测试连接</button></div>
+              <div class="fi"><label class="fl">备注</label><input class="inp" placeholder=""></div>
+
+              <div class="divider"><span>余额查询（仅 new-api 类中转需要，可选）</span></div>
+              <div class="fi"><label class="fl">NewAPI 访问令牌</label><input class="inp" type="password" placeholder="Access Token"><div class="hint">选填。new-api 类中转在标准额度接口不可用时，用它查询账户余额。</div></div>
+              <div class="fi"><label class="fl">NewAPI 用户 ID</label><input class="inp" placeholder="1"></div>
+              <div class="fi"><button class="btn sm">测试</button></div>
+
+              <div class="divider"><span>本地代理专用请求头（可选）</span></div>
+              <div class="fi"><label class="fl">请求头配置（JSON）</label><textarea class="inp" style="height:70px;font-family:monospace;font-size:12px" placeholder='{"Header-Name": "value"}'></textarea></div>
+            </div>
+          </div>
+
+          <div class="collapse" id="c-now-cap">
+            <div class="collapse-head" onclick="toggle('c-now-cap')"><span class="caret"></span>Codex私有能力</div>
+            <div class="collapse-body">
+              <div class="cap-row"><div><div>远程压缩</div><div class="sub">长会话把压缩请求发给当前站点。多数中转不支持，请保持关闭。</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>识图支持</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>生图支持</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>搜索</div></div><span class="sw"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn">取 消</button><button class="btn primary">保 存</button></div>
+      </div>
+      <div class="diff">
+        <span class="del">连接协议 / 测试连接</span> 埋在折叠里，新用户看不到 → 不知道能自动检测<br>
+        <span class="del">Divider 三层嵌套</span>（高级配置 &gt; 站点信息/余额/请求头）层级太深<br>
+        <span class="del">"高级配置"命名</span> 让人以为必填或危险，其实全是可选
+      </div>
+    </div>
+
+    <!-- ===== 调整版本 ===== -->
+    <div>
+      <div class="col-label">调整后 <span class="tag next">建议</span></div>
+      <div class="modal">
+        <div class="modal-head">添加站点 <span class="x">✕</span></div>
+        <div class="modal-body">
+          <div class="fi"><label class="fl">显示名称<span class="req">*</span></label><input class="inp" placeholder="My Relay"></div>
+          <div class="fi">
+            <label class="fl">Base URL<span class="info">i</span></label>
+            <div class="row"><span class="mini grip">⠿</span><input class="inp" placeholder="https://api.example.com"><button class="mini">+</button><button class="mini danger">−</button></div>
+            <div class="hint">第一项为当前 / 默认线路</div>
+          </div>
+          <div class="fi">
+            <label class="fl">API Key<span class="req">*</span></label>
+            <div class="row"><input class="inp" style="max-width:110px" placeholder="例如密…"><input class="inp" placeholder="sk-…"><button class="mini">+</button><button class="mini danger">−</button></div>
+            <div class="hint">可一次添加多个密钥，第一项为当前密钥</div>
+          </div>
+
+          <!-- 协议 + 测试提到基础区，紧贴 Base URL/Key 之后 -->
+          <div class="fi">
+            <label class="fl">连接协议</label>
+            <select class="sel"><option>自动检测</option><option>OpenAI 兼容</option><option>Anthropic</option></select>
+            <div class="inline-test">
+              <button class="btn sm">测试连接</button>
+              <span class="result">✓ 检测到 OpenAI 兼容 · 2 个模型</span>
+            </div>
+            <div class="hint">不确定就留「自动检测」，点测试即可</div>
+          </div>
+
+          <div class="collapse open" id="c-new-opt">
+            <div class="collapse-head" onclick="toggle('c-new-opt')"><span class="caret"></span>可选配置</div>
+            <div class="collapse-body">
+              <div class="fi"><label class="fl">备注</label><input class="inp" placeholder=""></div>
+
+              <div class="fi" style="margin-bottom:10px">
+                <label class="fl" style="margin-bottom:4px">余额查询 <span style="font-weight:400;color:var(--text3);font-size:12px">（new-api 类中转才需要）</span></label>
+                <div class="row"><input class="inp" type="password" placeholder="NewAPI 访问令牌"><input class="inp" style="max-width:120px" placeholder="用户 ID"></div>
+                <div class="inline-test"><button class="btn sm">测试</button></div>
+              </div>
+
+              <div class="fi" style="margin-bottom:0">
+                <label class="fl" style="margin-bottom:6px">本地代理请求头</label>
+                <div class="check" style="margin-bottom:8px"><input type="checkbox" id="hdr" onchange="document.getElementById('kv').style.display=this.checked?'block':'none'"><label for="hdr">启用自定义请求头</label></div>
+                <div id="kv" class="kv" style="display:none">
+                  <div class="kv-row"><input class="inp" placeholder="Header 名称"><input class="inp" placeholder="值"><button class="mini danger">×</button></div>
+                  <div class="kv-row"><input class="inp" placeholder="Header 名称"><input class="inp" placeholder="值"><button class="mini danger">×</button></div>
+                  <span class="btn-link">+ 添加请求头</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="collapse" id="c-new-cap">
+            <div class="collapse-head" onclick="toggle('c-new-cap')"><span class="caret"></span>Codex私有能力</div>
+            <div class="collapse-body">
+              <div class="cap-row"><div><div>远程压缩</div><div class="sub">长会话把压缩请求发给当前站点。多数中转不支持，请保持关闭。</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>识图支持</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>生图支持</div></div><span class="sw"></span></div>
+              <div class="cap-div"></div>
+              <div class="cap-row"><div><div>搜索</div></div><span class="sw"></span></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot"><button class="btn">取 消</button><button class="btn primary">保 存</button></div>
+      </div>
+      <div class="diff">
+        <span class="add">连接协议 + 测试连接提到基础区</span>，紧跟 Base URL/Key，新用户一眼能看到<br>
+        <span class="add">"高级配置" → "可选配置"</span>，去掉"站点信息"这层 Divider，扁平成一组<br>
+        <span class="add">请求头 JSON → 键值对 + 开关</span>，默认收起，不怕填错 JSON<br>
+        <span class="add">余额查询压成一行</span>（令牌+ID 并排），测试按钮紧跟
+      </div>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <b>说明：</b>右侧只动了<b>布局与分组</b>，字段、校验、后端命令都不变——协议/测试连接本就在同一表单里，只是从折叠区提到基础区；"可选配置"默认展开一次即记住状态。若你只想动文案不想动结构，我可以再出一版"仅重命名 + 去 Divider"的最小改动对比。
+  </div>
+</div>
+<script>
+  function toggle(id){document.getElementById(id).classList.toggle('open')}
+</script>
+</body>
+</html>

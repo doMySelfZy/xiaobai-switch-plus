@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>添加站点 — XiaoBaiSwitch Plus 原型 v2（浅色 · 对齐真实表单）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /*
+    结构与文案来源：src/components/sites/SiteFormModal.tsx
+      + BaseUrlListInput / ApiKeyListInput / CodexCapabilitySwitchList
+    配色来源：src/App.tsx（antd 亮色算法 + primaryColor #1677ff）
+      + ~/.xiaobai-switch 设置（themeMode=system / primaryColor=#1677ff）
+    requiredMark="optional"：真实表单必填项不加星号，非必填项标「(可选)」
+  */
+  :root {
+    --canvas:   #F2F5F9;
+    --surface:  #FFFFFF;
+    --line:     #F0F0F0;
+    --line-2:   #E8EAEE;
+    --input-bd: #D9D9D9;
+    --text:     rgba(0, 0, 0, .88);
+    --text-2:   rgba(0, 0, 0, .65);
+    --text-3:   rgba(0, 0, 0, .45);
+    --primary:  #1677FF;
+    --primary-h:#4096FF;
+    --success:  #52C41A;
+    --radius:   8px;
+    --ease:     cubic-bezier(.4, 0, .2, 1);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: linear-gradient(160deg, #F7F9FC 0%, #E9EEF5 100%);
+    color: var(--text);
+    font-size: 14px;
+    height: 100vh;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .backdrop {
+    position: fixed; inset: 0;
+    display: grid; place-items: center;
+    padding: 16px;
+  }
+
+  .modal {
+    width: 560px;                       /* AGENTS.md：表单弹窗 520–560 */
+    max-height: calc(100vh - 32px);
+    display: flex; flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(15, 23, 42, .16), 0 2px 8px rgba(15, 23, 42, .06);
+    overflow: hidden;
+  }
+
+  /* ── 头部 ─────────────────────────────────────────── */
+  .head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--line);
+    flex: none;
+  }
+  .head h2 { font-size: 16px; font-weight: 600; }
+  .x {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    border: none; border-radius: 6px; background: transparent;
+    color: var(--text-3); cursor: pointer; transition: background .15s, color .15s;
+  }
+  .x:hover { background: rgba(0, 0, 0, .045); color: var(--text-2); }
+
+  /* ── 主体（可滚动，同真实 modal 的 body overflowY:auto） ── */
+  .body { padding: 24px; overflow-y: auto; min-height: 0; }
+  .body::-webkit-scrollbar { width: 6px; }
+  .body::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, .14); border-radius: 3px; }
+
+  .field { margin-bottom: 20px; }
+  .field:last-child { margin-bottom: 0; }
+  .field > label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 14px; color: var(--text); margin-bottom: 8px;
+  }
+  .opt { font-size: 13px; color: var(--text-3); font-weight: 400; }
+  .hint { font-size: 13px; color: var(--text-3); line-height: 1.5; margin-top: 6px; }
+
+  /* ── antd 风格输入控件 ───────────────────────────── */
+  .inp {
+    height: 32px; width: 100%;
+    padding: 0 11px;
+    font: inherit; font-size: 14px; color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--input-bd);
+    border-radius: 6px;
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .inp::placeholder { color: rgba(0, 0, 0, .28); }
+  .inp:hover { border-color: var(--primary-h); }
+  .inp:focus { border-color: var(--primary-h); box-shadow: 0 0 0 2px rgba(5, 145, 255, .1); }
+  textarea.inp { height: auto; padding: 6px 11px; resize: vertical; line-height: 1.5; }
+
+  /* 内联图标按钮（复制/测试/增删行） */
+  .ib {
+    width: 32px; height: 32px; flex: none;
+    display: grid; place-items: center;
+    border: 1px solid var(--input-bd); border-radius: 6px;
+    background: var(--surface); color: var(--text-2);
+    cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+  }
+  .ib:hover { color: var(--primary); border-color: var(--primary-h); }
+  .ib:active { transform: scale(.96); }
+  .ib svg { width: 14px; height: 14px; }
+
+  /* ── 多行列表（线路 / API Key） ──────────────────── */
+  .rows { display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .row .inp { min-width: 0; }
+  .key-name { flex: 0 0 124px; }
+  .key-val  { flex: 1 1 auto; }
+
+  /* 首行标记：第一项即当前/默认 */
+  .first-badge {
+    flex: none; font-size: 12px; line-height: 20px;
+    padding: 0 7px; border-radius: 4px;
+    background: rgba(22, 119, 255, .1); color: var(--primary);
+  }
+
+  /* ── 折叠分区（antd Collapse size=small） ────────── */
+  .collapse {
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    overflow: hidden;
+    background: rgba(0, 0, 0, .012);
+  }
+  .collapse:last-child { margin-bottom: 0; }
+  .col-head {
+    width: 100%;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 12px;
+    border: none; background: transparent;
+    font: inherit; font-size: 14px; color: var(--text);
+    cursor: pointer; text-align: left;
+    transition: background .15s;
+  }
+  .col-head:hover { background: rgba(0, 0, 0, .02); }
+  .col-head .chev { width: 12px; height: 12px; color: var(--text-3); transition: transform .2s var(--ease); }
+  .collapse.open .col-head .chev { transform: rotate(90deg); }
+  .col-body { display: none; padding: 4px 12px 14px; border-top: 1px solid var(--line); }
+  .collapse.open .col-body { display: block; }
+  .col-body .field:first-child { margin-top: 14px; }
+
+  /* ── 分隔小标题（antd Divider titlePlacement=start） ── */
+  .divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 18px 0 14px;
+    font-size: 12px; color: var(--text-3); white-space: nowrap;
+  }
+  .divider::after { content: ''; flex: 1; height: 1px; background: var(--line-2); }
+
+  /* ── 下拉（模拟 antd Select） ────────────────────── */
+  .select {
+    height: 32px; width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 11px;
+    border: 1px solid var(--input-bd); border-radius: 6px;
+    background: var(--surface); color: var(--text-3);
+    cursor: pointer; transition: border-color .15s;
+  }
+  .select:hover { border-color: var(--primary-h); }
+  .select svg { width: 12px; height: 12px; color: var(--text-3); }
+  .select.filled { color: var(--text); }
+
+  /* ── 按钮 ─────────────────────────────────────────── */
+  .btn {
+    height: 32px; padding: 0 15px;
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-size: 14px;
+    border: 1px solid var(--input-bd); border-radius: 6px;
+    background: var(--surface); color: var(--text);
+    cursor: pointer; transition: all .15s;
+  }
+  .btn:hover { color: var(--primary); border-color: var(--primary-h); }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { background: var(--primary-h); border-color: var(--primary-h); color: #fff; }
+  .btn.sm { height: 24px; padding: 0 8px; font-size: 12px; border-radius: 4px; }
+
+  .test-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -12px 0 16px; }
+  .test-ok { font-size: 12px; color: var(--success); display: flex; align-items: center; gap: 4px; }
+  .test-ok svg { width: 12px; height: 12px; }
+
+  /* ── 开关行（Codex 私有能力） ────────────────────── */
+  .switch-row {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    padding: 8px 0;
+  }
+  .switch-row .t { font-size: 14px; }
+  .switch-row .h { font-size: 12px; color: var(--text-3); line-height: 1.5; margin-top: 2px; }
+  .switch {
+    flex: none; width: 36px; height: 20px; border-radius: 10px;
+    background: rgba(0, 0, 0, .18); position: relative; cursor: pointer;
+    transition: background .2s var(--ease); margin-top: 2px;
+  }
+  .switch::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+    transition: transform .2s var(--ease);
+  }
+  .switch.on { background: var(--primary); }
+  .switch.on::after { transform: translateX(16px); }
+  .switch-div { height: 1px; background: var(--line); margin: 2px 0; }
+
+  /* ── 底栏 ─────────────────────────────────────────── */
+  .foot {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding: 14px 24px;
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+    flex: none;
+  }
+
+  /* toast */
+  .toast {
+    position: fixed; left: 50%; top: 28px;
+    transform: translate(-50%, -80px);
+    background: #fff; border: 1px solid var(--line-2);
+    border-radius: 8px; padding: 9px 16px;
+    font-size: 13px;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .14);
+    transition: transform .26s var(--ease);
+    pointer-events: none; z-index: 50;
+  }
+  .toast.show { transform: translate(-50%, 0); }
+</style>
+</head>
+<body>
+
+<div class="backdrop">
+  <div class="modal" role="dialog" aria-label="添加站点">
+
+    <div class="head">
+      <h2>添加站点</h2>
+      <button class="x" id="close" aria-label="关闭">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M18 6 6 18M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="body">
+
+      <!-- 显示名称 -->
+      <div class="field">
+        <label for="f-name">显示名称</label>
+        <input class="inp" id="f-name" placeholder="My Relay" />
+      </div>
+
+      <!-- 线路 -->
+      <div class="field">
+        <label>线路</label>
+        <div class="rows" id="url-rows">
+          <div class="row">
+            <span class="first-badge">当前</span>
+            <input class="inp" placeholder="https://api.example.com" value="https://api.example.com" />
+            <button class="ib" title="添加线路" data-add-url>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="ib" title="删除线路" data-del-row>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="row">
+            <input class="inp" placeholder="https://api.example.com" value="https://backup.example.com" />
+            <button class="ib" title="添加线路" data-add-url>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="ib" title="删除线路" data-del-row>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="hint">第一项为当前 / 默认线路</div>
+      </div>
+
+      <!-- API Key -->
+      <div class="field">
+        <label>API Key</label>
+        <div class="rows" id="key-rows">
+          <div class="row">
+            <span class="first-badge">当前</span>
+            <input class="inp key-val" type="password" placeholder="sk-..." value="sk-abcdef0123456789" />
+            <button class="ib" title="复制">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button>
+            <button class="ib" title="测试密钥">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </button>
+            <button class="ib" title="添加密钥" data-add-key>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="ib" title="删除密钥" data-del-row>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="row">
+            <input class="inp key-name" placeholder="例如密钥 2" value="备用" />
+            <input class="inp key-val" type="password" placeholder="sk-..." value="sk-9988776655443322" />
+            <button class="ib" title="复制">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+            </button>
+            <button class="ib" title="测试密钥">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+            </button>
+            <button class="ib" title="添加密钥" data-add-key>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="ib" title="删除密钥" data-del-row>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="hint">可一次添加多个密钥，第一项为当前密钥</div>
+      </div>
+
+      <!-- 高级配置 -->
+      <div class="collapse open" id="col-advanced">
+        <button class="col-head" data-toggle>
+          高级配置
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="col-body">
+
+          <div class="field">
+            <label>连接协议 <span class="opt">(可选)</span></label>
+            <div class="select" id="protocol">
+              <span id="protocol-text">留空自动检测</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+            <div class="hint">不确定时可留空，点击下方「测试连接」自动检测</div>
+          </div>
+
+          <div class="test-row">
+            <button class="btn sm" id="test-conn">测试连接</button>
+            <span class="test-ok" id="test-ok" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>
+              检测到 OpenAI 兼容 协议，128 个模型
+            </span>
+          </div>
+
+          <div class="field">
+            <label>备注 <span class="opt">(可选)</span></label>
+            <textarea class="inp" rows="2" placeholder=""></textarea>
+          </div>
+
+          <div class="divider">余额查询（仅 new-api 类中转需要，可选）</div>
+
+          <div class="field">
+            <label>NewAPI 访问令牌 <span class="opt">(可选)</span></label>
+            <input class="inp" type="password" placeholder="Access Token" />
+            <div class="hint">选填。new-api 类中转在标准额度接口不可用时，用它查询账户余额（个人设置-生成访问令牌）。</div>
+          </div>
+
+          <div class="field">
+            <label>NewAPI 用户 ID <span class="opt">(可选)</span></label>
+            <input class="inp" placeholder="1" inputmode="numeric" />
+            <div class="hint">配合访问令牌使用（个人设置-用户 ID）。</div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Codex 私有能力 -->
+      <div class="collapse" id="col-codex">
+        <button class="col-head" data-toggle>
+          Codex私有能力
+          <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <div class="col-body">
+          <div class="switch-row">
+            <div>
+              <div class="t">远程压缩</div>
+              <div class="h">长会话把压缩请求发给当前站点。多数中转不支持，请保持关闭。开启后会把该 provider 显示名写成 OpenAI（Codex 据此判断能否走远程压缩）；关闭则恢复站点名称。</div>
+            </div>
+            <div class="switch" data-switch role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+          <div class="switch-div"></div>
+          <div class="switch-row">
+            <div>
+              <div class="t">识图支持</div>
+              <div class="h">允许 Codex 把本地图片发给当前模型做识别。纯文本中转请关闭。若同时写入模型目录，目录会声明 text + image。</div>
+            </div>
+            <div class="switch" data-switch role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+          <div class="switch-div"></div>
+          <div class="switch-row">
+            <div>
+              <div class="t">生图支持</div>
+              <div class="h">允许 Codex 调用内置生图工具。多数中转没有该能力，请保持关闭。与识图独立，可只开其中一个。</div>
+            </div>
+            <div class="switch" data-switch role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+          <div class="switch-div"></div>
+          <div class="switch-row">
+            <div>
+              <div class="t">搜索</div>
+              <div class="h">允许 Codex 使用内置网页搜索工具。站点不支持该工具时请关闭，否则请求会失败。</div>
+            </div>
+            <div class="switch" data-switch role="switch" aria-checked="false" tabindex="0"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="foot">
+      <button class="btn" id="cancel">取消</button>
+      <button class="btn primary" id="save">保存</button>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const toastEl = document.getElementById('toast');
+  let toastTimer = null;
+  function toast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1600);
+  }
+
+  // 折叠分区
+  document.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => btn.closest('.collapse').classList.toggle('open'));
+  });
+
+  // 开关
+  document.querySelectorAll('[data-switch]').forEach((sw) => {
+    const flip = () => {
+      sw.classList.toggle('on');
+      sw.setAttribute('aria-checked', String(sw.classList.contains('on')));
+    };
+    sw.addEventListener('click', flip);
+    sw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); }
+    });
+  });
+
+  // 线路 / 密钥行的增删（首行永远保留，与真实实现的「第一项为当前」一致）
+  function bindRows(container, addSel, templateFn) {
+    container.addEventListener('click', (e) => {
+      const addBtn = e.target.closest('[data-add-url], [data-add-key]');
+      const delBtn = e.target.closest('[data-del-row]');
+      if (addBtn) {
+        container.insertAdjacentHTML('beforeend', templateFn());
+        toast('已添加一行');
+      } else if (delBtn) {
+        const row = delBtn.closest('.row');
+        const isFirst = container.firstElementChild === row;
+        if (isFirst) { toast('首项为当前项，不能删除'); return; }
+        row.remove();
+      }
+    });
+  }
+
+  const urlTemplate = () => `<div class="row">
+      <input class="inp" placeholder="https://api.example.com" />
+      <button class="ib" title="添加线路" data-add-url><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="ib" title="删除线路" data-del-row><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+    </div>`;
+
+  const keyTemplate = () => `<div class="row">
+      <input class="inp key-name" placeholder="例如密钥 2" />
+      <input class="inp key-val" type="password" placeholder="sk-..." />
+      <button class="ib" title="复制"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg></button>
+      <button class="ib" title="测试密钥"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></button>
+      <button class="ib" title="添加密钥" data-add-key><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="ib" title="删除密钥" data-del-row><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+    </div>`;
+
+  bindRows(document.getElementById('url-rows'), null, urlTemplate);
+  bindRows(document.getElementById('key-rows'), null, keyTemplate);
+
+  // 复制 / 测试密钥
+  document.querySelectorAll('.ib[title="复制"]').forEach((b) =>
+    b.addEventListener('click', () => toast('已复制密钥')),
+  );
+  document.querySelectorAll('.ib[title="测试密钥"]').forEach((b) =>
+    b.addEventListener('click', () => toast('正在测试密钥…')),
+  );
+
+  // 测试连接
+  const testBtn = document.getElementById('test-conn');
+  const testOk = document.getElementById('test-ok');
+  testBtn.addEventListener('click', () => {
+    testBtn.disabled = true;
+    testBtn.textContent = '检测中…';
+    setTimeout(() => {
+      testBtn.disabled = false;
+      testBtn.textContent = '测试连接';
+      testOk.hidden = false;
+      document.getElementById('protocol-text').textContent = 'OpenAI 兼容';
+      document.getElementById('protocol').classList.add('filled');
+    }, 900);
+  });
+
+  document.getElementById('close').addEventListener('click', () => toast('关闭'));
+  document.getElementById('cancel').addEventListener('click', () => toast('取消'));
+  document.getElementById('save').addEventListener('click', () => toast('保存站点'));
+</script>
+</body>
+</html>
