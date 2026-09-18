@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>额度缺失原因的摆放位置 · 三个方案</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: #f0f2f5;
+    color: rgba(0,0,0,.88);
+    padding: 28px 24px 56px;
+  }
+
+  .page-title { font-size: 20px; font-weight: 600; }
+  .page-sub { font-size: 13px; color: rgba(0,0,0,.65); margin-top: 6px; max-width: 980px; line-height: 1.7; }
+
+  .variants {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    margin-top: 24px;
+    align-items: flex-start;
+  }
+
+  .variant { width: 470px; }
+
+  .variant-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .badge {
+    font-size: 12px; font-weight: 600; color: #fff; background: rgba(0,0,0,.45);
+    border-radius: 4px; padding: 2px 7px;
+  }
+  .badge.recommend { background: #1677ff; }
+  .variant-name { font-size: 14px; font-weight: 600; }
+
+  /* —— 应用壳：左列表 + 右详情 —— */
+  .shell {
+    display: flex;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 2px 8px rgba(0,0,0,.04);
+  }
+
+  .list { width: 232px; border-right: 1px solid rgba(5,5,5,.06); padding: 6px 0; flex-shrink: 0; }
+  .list-cap { font-size: 11px; color: rgba(0,0,0,.35); padding: 4px 12px 6px; }
+
+  .row { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 2px; min-height: 44px; }
+  .row.active { background: #e6f4ff; }
+
+  .grip { width: 20px; text-align: center; color: rgba(0,0,0,.25); font-size: 13px; flex-shrink: 0; }
+
+  .body { flex: 1; min-width: 0; padding: 6px 0; }
+  .line1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .avatar {
+    width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0;
+    background: #f0f0f0; color: rgba(0,0,0,.55);
+    font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+  }
+  .row.active .avatar { background: #bae0ff; color: #0958d9; }
+  .name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .line2 { min-height: 20px; font-size: 12px; line-height: 20px; }
+  .money { font-variant-numeric: tabular-nums; color: rgba(0,0,0,.65); }
+  .money small { color: rgba(0,0,0,.45); }
+  .reason-row { color: rgba(0,0,0,.25); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .reason-short { color: rgba(0,0,0,.25); }
+  .blank { /* 留空：保留行高，不写字 */ }
+
+  .switch {
+    width: 28px; height: 16px; border-radius: 8px; background: #1677ff; position: relative; flex-shrink: 0;
+  }
+  .switch::after {
+    content: ''; position: absolute; top: 2px; right: 2px; width: 12px; height: 12px;
+    border-radius: 50%; background: #fff;
+  }
+  .more { color: rgba(0,0,0,.35); font-size: 14px; flex-shrink: 0; }
+
+  .detail { flex: 1; padding: 12px 12px 14px; min-width: 0; }
+  .detail h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+  .kv { display: flex; gap: 6px; font-size: 12px; line-height: 22px; }
+  .kv > span:first-child { width: 68px; flex-shrink: 0; color: rgba(0,0,0,.45); }
+  .kv .val { color: rgba(0,0,0,.85); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kv .val.reason { color: rgba(0,0,0,.65); }
+  .refresh { color: rgba(0,0,0,.45); font-size: 11px; border: 1px solid rgba(5,5,5,.12); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+  .link { color: #1677ff; margin-left: 6px; }
+
+  .mark {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #faad14;
+    vertical-align: middle; margin-left: 4px;
+  }
+
+  .notes { margin-top: 10px; font-size: 12px; line-height: 1.75; color: rgba(0,0,0,.65); }
+  .notes b { color: rgba(0,0,0,.88); }
+  .pro::before { content: '✓ '; color: #52c41a; }
+  .con::before { content: '✗ '; color: #ff4d4f; }
+
+  .foot {
+    margin-top: 32px; background: #fff; border-radius: 8px; padding: 18px 20px; max-width: 964px;
+    font-size: 13px; line-height: 1.85; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .foot h3 { font-size: 14px; margin-bottom: 8px; }
+  .foot code { background: #f5f5f5; border-radius: 3px; padding: 1px 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <div class="page-title">「为什么没有余额」这句话放在哪？</div>
+  <div class="page-sub">
+    站点没有额度接口时，列表第二行现在是灰字原因。问题是：<b>选中某一行后，右手边的详情面板本来就在说同一句话</b>，
+    于是同一屏出现两遍。三个方案都基于你截图里的四个站点，橙色圆点标出差异位置。
+  </div>
+
+  <div class="variants">
+
+    <!-- A -->
+    <div class="variant">
+      <div class="variant-head">
+        <span class="badge">A</span>
+        <span class="variant-name">保持现状：列表行 + 详情面板都有</span>
+      </div>
+      <div class="shell">
+        <div class="list">
+          <div class="list-cap">上游站点</div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">S</div><div class="name">SHUAI API</div></div>
+              <div class="line2"><span class="money">$ 12.40 <small>/ 余额</small></span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row active">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">A</div><div class="name">AiHub</div><span class="mark"></span></div>
+              <div class="line2"><span class="reason-row">此站点不支持自动获取额度</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">M</div><div class="name">ModelScope 魔搭</div></div>
+              <div class="line2"><span class="reason-row">此站点不支持自动获取额度</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">R</div><div class="name">AnyRouter</div></div>
+              <div class="line2"><span class="reason-row">连接超时</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+        </div>
+        <div class="detail">
+          <h4>AiHub</h4>
+          <div class="kv"><span>Base URL</span><div class="val">https://aihub.example.com</div></div>
+          <div class="kv"><span>API Key</span><div class="val">sk-9f2c…</div></div>
+          <div class="kv"><span>账户余额</span><div class="val reason">此站点不支持自动获取额度<span class="mark"></span><span class="refresh">⟳</span><span class="link">配置访问令牌</span></div></div>
+          <div class="kv"><span>模型</span><div class="val">claude-sonnet-4-5 · gpt-5</div></div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="pro">未选中行和选中行视觉一致，扫一眼就知道每行为什么是空的</div>
+        <div class="pro">点选中行时不需要移动视线</div>
+        <div class="con">同一句话一屏两遍</div>
+        <div class="con">列表 232px 宽，长句被截断成「此站点不支持自动获取额…」</div>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="variant">
+      <div class="variant-head">
+        <span class="badge">B</span>
+        <span class="variant-name">选中那一行留空：原因只在详情面板</span>
+      </div>
+      <div class="shell">
+        <div class="list">
+          <div class="list-cap">上游站点</div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">S</div><div class="name">SHUAI API</div></div>
+              <div class="line2"><span class="money">$ 12.40 <small>/ 余额</small></span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row active">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">A</div><div class="name">AiHub</div><span class="mark"></span></div>
+              <div class="line2"><span class="blank">&nbsp;</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">M</div><div class="name">ModelScope 魔搭</div></div>
+              <div class="line2"><span class="reason-row">此站点不支持自动获取额度</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">R</div><div class="name">AnyRouter</div></div>
+              <div class="line2"><span class="reason-row">连接超时</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+        </div>
+        <div class="detail">
+          <h4>AiHub</h4>
+          <div class="kv"><span>Base URL</span><div class="val">https://aihub.example.com</div></div>
+          <div class="kv"><span>API Key</span><div class="val">sk-9f2c…</div></div>
+          <div class="kv"><span>账户余额</span><div class="val reason">此站点不支持自动获取额度<span class="mark"></span><span class="refresh">⟳</span><span class="link">配置访问令牌</span></div></div>
+          <div class="kv"><span>模型</span><div class="val">claude-sonnet-4-5 · gpt-5</div></div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="pro">彻底不重复，详情面板成为唯一出口</div>
+        <div class="con">点一行下去，那行的灰字就消失了 —— 又变回你截图里抱怨的空白</div>
+        <div class="con">切换选中项时第二行内容跳动，列表高度感不稳定</div>
+        <div class="con">「有余额的行」选中后仍显示金额，所以留空只发生在没额度的行上，规则不好解释</div>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="variant">
+      <div class="variant-head">
+        <span class="badge recommend">C 推荐</span>
+        <span class="variant-name">列表行只留短标签，全称给详情面板</span>
+      </div>
+      <div class="shell">
+        <div class="list">
+          <div class="list-cap">上游站点</div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">S</div><div class="name">SHUAI API</div></div>
+              <div class="line2"><span class="money">$ 12.40 <small>/ 余额</small></span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row active">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">A</div><div class="name">AiHub</div><span class="mark"></span></div>
+              <div class="line2"><span class="reason-short">无额度接口</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">M</div><div class="name">ModelScope 魔搭</div></div>
+              <div class="line2"><span class="reason-short">无额度接口</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+          <div class="row">
+            <div class="grip">⠿</div>
+            <div class="body">
+              <div class="line1"><div class="avatar">R</div><div class="name">AnyRouter</div></div>
+              <div class="line2"><span class="reason-short">获取失败</span></div>
+            </div>
+            <div class="switch"></div><div class="more">⋯</div>
+          </div>
+        </div>
+        <div class="detail">
+          <h4>AiHub</h4>
+          <div class="kv"><span>Base URL</span><div class="val">https://aihub.example.com</div></div>
+          <div class="kv"><span>API Key</span><div class="val">sk-9f2c…</div></div>
+          <div class="kv"><span>账户余额</span><div class="val reason">此站点不支持自动获取额度<span class="mark"></span><span class="refresh">⟳</span><span class="link">配置访问令牌</span></div></div>
+          <div class="kv"><span>模型</span><div class="val">claude-sonnet-4-5 · gpt-5</div></div>
+        </div>
+      </div>
+      <div class="notes">
+        <div class="pro">不重复：列表是四字典标签，详情是完整句子，读起来是「摘要 → 说明」</div>
+        <div class="pro">选中行照样有字，不会回到空白；切换时列表不跳</div>
+        <div class="pro">232px 下列表不再截断</div>
+        <div class="con">要新增 4 条短文案（无额度接口 / 未授权 / 数据异常 / 获取失败），中英文各一份</div>
+        <div class="con">短标签丢掉了具体错误细节，细节仍要去详情面板看</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <h3>实现差异只有这么多</h3>
+    三个方案共用同一份数据源，改动都只在 <code>src/components/sites/SiteListItem.tsx</code> 的占位分支：
+    <br>· A = 现在的代码，不动。
+    <br>· B = 在该分支加一个 <code>active</code> 判断（组件已经有 <code>active</code> prop），选中时不渲染。
+    <br>· C = 把 <code>statusTextMap</code> 的 key 换成一组新的短文案 key，详情面板的 <code>SiteQuotaRow</code> 保持全称不变。
+    <br><br>
+    对应文案在 <code>src/i18n/locales/zh-CN.json</code> 与 <code>en-US.json</code>：全称那句是
+    <code>sites.quotaUnsupported</code> 等 4 个 key，已被列表行和详情面板共用 —— 所以 C 是「加 4 个 key」，不是「改 4 个 key」，
+    详情面板不受影响。测试上 A 无需改动，B/C 各改 <code>SiteListItem.test.tsx</code> 里的断言文案。
+    <br><br>
+    <b>我的判断：</b>选 C。你说「都空白看着难受」的病根是<b>没有信息</b>，不是<b>信息重复</b>；B 治好了重复却把病根放回去，
+    A 保留了信息但撞上了 232px 的截断。C 同时避开两者，代价只是四条短文案。
+  </div>
+</body>
+</html>

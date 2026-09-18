@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "提交前全量检查口径"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "核对展示层改动没有破坏两缓存分工契约"}

@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/09-18-site-add-presets/design.md", "reason": "核对状态映射表与脱敏约束是否逐条落实"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 Rust 枚举 / TS 镜像 / browserMock 三处是否同步"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "提交前全量检查口径"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端 command 与 schema 相关约定索引"}
