@@ -284,12 +284,15 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
 
   const handleTestProtocol = async () => {
     const values = form.getFieldsValue(["baseUrls", "apiKeys"]);
-    const baseUrls = normalizeBaseUrls((values.baseUrls as string[] | undefined) ?? []);
-    const keys = normalizeApiKeyDrafts(values.apiKeys);
-    if (!baseUrls[0]) {
+    // normalizeBaseUrls 在空/非法 URL 时抛错；必须在此捕获并提示，否则 async 里会静默 reject。
+    let baseUrls: string[];
+    try {
+      baseUrls = normalizeBaseUrls((values.baseUrls as string[] | undefined) ?? []);
+    } catch {
       message.error(t("sites.baseUrlRequired"));
       return;
     }
+    const keys = normalizeApiKeyDrafts(values.apiKeys);
     if (keys.length === 0 || !keys[0]?.apiKey) {
       message.error(t("sites.apiKeyRequired"));
       return;
@@ -351,13 +354,16 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
 
   const handleTestNewapi = async () => {
     const values = form.getFieldsValue(["newapiAccessToken", "newapiUserId", "baseUrls"]);
-    const baseUrls = normalizeBaseUrls((values.baseUrls as string[] | undefined) ?? []);
-    const accessToken = ((values.newapiAccessToken as string | undefined) ?? "").trim();
-    const userId = ((values.newapiUserId as string | undefined) ?? "").trim();
-    if (!baseUrls[0]) {
+    // 同 handleTestProtocol：空/非法 URL 会抛，需捕获提示，避免静默 reject。
+    let baseUrls: string[];
+    try {
+      baseUrls = normalizeBaseUrls((values.baseUrls as string[] | undefined) ?? []);
+    } catch {
       message.error(t("sites.newapiTestMissingBaseUrl"));
       return;
     }
+    const accessToken = ((values.newapiAccessToken as string | undefined) ?? "").trim();
+    const userId = ((values.newapiUserId as string | undefined) ?? "").trim();
     if (!userId) {
       message.error(t("sites.newapiTestMissingCredentials"));
       return;
@@ -439,7 +445,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
           baseUrl: baseUrls[0],
           apiKeys: keys,
           protocol: values.protocol as SiteProtocol,
-          notes: values.notes || null,
+          notes: values.notes ?? null,
           capabilities,
           newapiAccessToken,
           newapiUserId: values.newapiUserId?.trim() || "",
@@ -458,7 +464,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
             apiKey: row.apiKey,
           })),
           protocol: values.protocol,
-          notes: values.notes || null,
+          notes: values.notes ?? null,
           capabilities,
           newapiAccessToken: values.newapiAccessToken?.trim() || null,
           newapiUserId: values.newapiUserId?.trim() || null,
