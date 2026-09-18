@@ -3,8 +3,10 @@ import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@/lib/invoke";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { invoke } from "@/lib/invoke";
 import { useSiteStore } from "@/stores";
+import { formatQuotaAmountLocalized } from "@/lib/quotaProbe";
 import type { AppSettings, SiteQuotaSummary } from "@/types/domain";
 import {
   ReloadOutlined,
@@ -101,12 +103,13 @@ function quotaColor(
 
 function formatQuota(
   quota: SiteQuotaSummary["quota"],
-  t: (key: string) => string,
+  t: TFunction,
 ): string {
   if (!quota) return t("settings.floatingWindowUnavailable");
   if (quota.unlimited) return t("settings.floatingWindowUnlimited");
+  // 口径跟着 `quota.unit` 走：这里自己拼 `$` 会把魔粒、点数、人民币都读成美元。
   if (quota.remainingUsd !== null && quota.remainingUsd !== undefined) {
-    return `$${quota.remainingUsd.toFixed(2)}`;
+    return formatQuotaAmountLocalized(quota.remainingUsd, quota.unit, t);
   }
   if (
     quota.totalUsd !== null &&
@@ -114,7 +117,7 @@ function formatQuota(
     quota.usedUsd !== null &&
     quota.usedUsd !== undefined
   ) {
-    return `$${(quota.totalUsd - quota.usedUsd).toFixed(2)}`;
+    return formatQuotaAmountLocalized(quota.totalUsd - quota.usedUsd, quota.unit, t);
   }
   return t("settings.floatingWindowUnavailable");
 }

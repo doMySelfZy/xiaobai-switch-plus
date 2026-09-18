@@ -120,6 +120,15 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+- [ ] Checked that every additive Rust enum value has its TS mirror: `QuotaSource`
+      / `QuotaProbeStatus` serialize snake_case, and a missing TS literal only shows
+      up as an unhandled string at render time. Same for a new quota `unit` — it needs
+      a branch in both `normalizeQuotaUnit` and `formatQuotaAmountParts`, otherwise the
+      raw upstream token ("MAGICUBE") gets printed into user copy.
+- [ ] Checked that a dedicated probe channel is whitelisted in **both** places it is
+      gated: the early-return inside `probe_quota` and the empty-key放行 in
+      `commands/quota.rs` (`allows_empty_key_probe`). Passing only the first leaves an
+      empty-key site silently short-circuited to "no data".
 
 ---
 

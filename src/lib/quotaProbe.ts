@@ -35,10 +35,18 @@ export function normalizeQuotaUnit(unit: string | null | undefined): string {
   if (raw === "RMB" || raw === "CNY" || raw === "¥" || raw === "元") return "CNY";
   if (raw === "$" || raw === "USD") return "USD";
   if (raw === "QUOTA" || raw === "RAW_QUOTA") return "RAW_QUOTA";
+  // 魔粒是点数口径，上游也可能直接给中文单位。
+  if (raw === "MAGICUBE" || raw === "MAGICUBES" || raw === "魔粒") return "MAGICUBE";
   return raw || "USD";
 }
 
-export type QuotaUnitI18nKey = "sites.quotaUnitRaw";
+export type QuotaUnitI18nKey = "sites.quotaUnitRaw" | "sites.quotaUnitMagicube";
+
+/** 非 i18n 场景（`formatQuotaAmount`）下的单位回退名，与 i18n key 一一对应。 */
+const QUOTA_UNIT_FALLBACKS: Record<QuotaUnitI18nKey, string> = {
+  "sites.quotaUnitRaw": "RAW_QUOTA",
+  "sites.quotaUnitMagicube": "MAGICUBE",
+};
 
 export interface FormattedQuotaAmountParts {
   value: string;
@@ -51,6 +59,11 @@ function formatQuotaNumber(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
+}
+
+/** 魔粒按点数计：千分位、最多 2 位小数（保留上游精度），不加货币符号。 */
+function formatMagicubeNumber(amount: number): string {
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(amount);
 }
 
 export function formatQuotaAmountParts(
@@ -80,6 +93,13 @@ export function formatQuotaAmountParts(
       unitI18nKey: "sites.quotaUnitRaw",
     };
   }
+  if (normalized === "MAGICUBE") {
+    return {
+      value: formatMagicubeNumber(amount),
+      unit: null,
+      unitI18nKey: "sites.quotaUnitMagicube",
+    };
+  }
   return {
     value: formatQuotaNumber(amount),
     unit: normalized,
@@ -90,7 +110,7 @@ export function formatQuotaAmountParts(
 export function formatQuotaAmount(amount: number, unit?: string | null): string {
   const parts = formatQuotaAmountParts(amount, unit);
   if (parts.unit) return `${parts.value} ${parts.unit}`;
-  if (parts.unitI18nKey) return `${parts.value} RAW_QUOTA`;
+  if (parts.unitI18nKey) return `${parts.value} ${QUOTA_UNIT_FALLBACKS[parts.unitI18nKey]}`;
   return parts.value;
 }
 

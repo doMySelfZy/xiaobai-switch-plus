@@ -545,7 +545,8 @@ export type QuotaSource =
   | "token_usage"
   | "user_self"
   | "opencode_go"
-  | "sub2_api";
+  | "sub2_api"
+  | "magicube_balance";
 
 /** One OpenCode Go usage window (5-hour / weekly / monthly). */
 export interface QuotaWindow {

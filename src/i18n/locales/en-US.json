@@ -83,6 +83,7 @@
     "quotaUnlimited": "No limit for this key",
     "quotaUnknown": "Quota unknown",
     "quotaUnitRaw": "quota credits",
+    "quotaUnitMagicube": "Magicubes",
     "quotaExpires": "Expires {{date}}",
     "quotaUpdated": "Updated {{time}}",
     "quotaUpdatedJustNow": "Updated just now",

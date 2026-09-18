@@ -221,6 +221,42 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// 魔搭余额端点。它与推理端点不同域（`modelscope.cn` vs `api-inference.modelscope.cn`），
+/// 所以写成常量而不是从 `base_url` 派生 —— 派生等于把用户可控的 host 拼进带 Bearer 的请求。
+pub const MAGICUBE_BALANCE_URL: &str = "https://modelscope.cn/openapi/v1/magicubes/balance";
+
+/// 魔搭渠道识别：只接受 https 且 host 严格等于推理域名，避免
+/// `api-inference.modelscope.cn.evil.com` 这类形似 host 误判进专用探测链。
+/// 口径与前端 `src/lib/siteProviderKinds.ts` 的 `isModelScopeBase` 一致。
+pub fn is_modelscope_base(base_url: &str) -> bool {
+    let Ok(parsed) = Url::parse(base_url.trim()) else {
+        return false;
+    };
+    parsed.scheme() == "https" && parsed.host_str() == Some("api-inference.modelscope.cn")
+}
+
+/// 空 key 时仍要发出探测的专用渠道。放行是为了让它们落到各自的 401 语义，
+/// 而不是在命令层被 `empty_key_result()` 短路成「无数据」—— 那样用户看不到
+/// 「令牌无效」这条可诊断的错误。
+pub fn allows_empty_key_probe(base_url: &str) -> bool {
+    is_opencode_go_base(base_url) || is_modelscope_base(base_url)
+}
+
+fn magicube_balance_url() -> String {
+    #[cfg(test)]
+    if let Some(url) = MAGICUBE_URL_OVERRIDE.with(|cell| cell.borrow().clone()) {
+        return url;
+    }
+    MAGICUBE_BALANCE_URL.to_string()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam so the magicube probe can target a local mock server.
+    static MAGICUBE_URL_OVERRIDE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 pub fn normalize_quota_unit(raw: &str) -> String {
     match raw.trim().to_ascii_uppercase().as_str() {
         "RMB" | "CNY" | "¥" | "元" => "CNY".into(),
@@ -1059,6 +1095,9 @@ pub fn interpret_round(
 fn quota_source_rank(source: Option<QuotaSource>) -> u8 {
     match source {
         Some(QuotaSource::OpencodeGo) => 6,
+        // 专用渠道在 `probe_quota` 里就早退了，永远不进这里的合并；给个高值只为
+        // 保持穷尽，不改变任何既有排序。
+        Some(QuotaSource::MagicubeBalance) => 6,
         Some(QuotaSource::TokenUsage) => 5,
         Some(QuotaSource::UserSelf) => 5,
         Some(QuotaSource::CreditGrants) => 4,
@@ -1638,6 +1677,133 @@ async fn probe_opencode_go_usage(
     opencode_go_quota(status, &body, fetched_at, latency(), &url)
 }
 
+/// 上游 `code` 只保留稳定标识字符并截断后回显：`message` 是自由文本，可能带回首
+/// 请求头或令牌，因此一律不进错误串。
+fn magicube_code_tag(value: &Value) -> String {
+    const MAX_CODE_CHARS: usize = 64;
+    let raw = match value.get("code") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Number(number)) => number.to_string(),
+        _ => String::new(),
+    };
+    let filtered: String = raw
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        .take(MAX_CODE_CHARS)
+        .collect();
+    if filtered.is_empty() {
+        "success=false".into()
+    } else {
+        format!("code={filtered}")
+    }
+}
+
+/// Classify a magicube balance response into a `SiteQuota`.
+///
+/// 口径是「魔粒账户余额」，既不是金额也不是调用次数，所以 unit 固定为 `MAGICUBE`；
+/// 数据缺失或畸形一律 `invalid_data`，绝不兜底成 0 魔粒 —— 0 与「查不到」在用户
+/// 眼里是完全不同的两件事。
+fn magicube_quota(
+    status: u16,
+    body: &str,
+    fetched_at: i64,
+    latency_ms: u64,
+    endpoint: &str,
+) -> SiteQuota {
+    let quiet_at = |probe_status: QuotaProbeStatus, error: Option<String>| {
+        quiet(probe_status, error, latency_ms, Some(endpoint.to_string()))
+    };
+    let invalid = || quiet_at(QuotaProbeStatus::InvalidData, Some("invalid quota data".into()));
+    match status {
+        // 魔搭的 403 就是令牌没有权限（不像 Go 那样区分订阅权益），仍归认证失败。
+        401 | 403 => quiet_at(QuotaProbeStatus::Unauthorized, None),
+        200..=299 => {
+            let Ok(value) = serde_json::from_str::<Value>(body) else {
+                return invalid();
+            };
+            if value.get("success").and_then(Value::as_bool) == Some(false) {
+                return quiet_at(QuotaProbeStatus::InvalidData, Some(magicube_code_tag(&value)));
+            }
+            let Some(data) = value.get("data").filter(|data| data.is_object()) else {
+                return invalid();
+            };
+            let Some(balance) = field_f64(data, "available_balance") else {
+                return invalid();
+            };
+            // `frozen_amount` 不显示：它需要额外解释才不会读成「已花费」。
+            match available(
+                QuotaSource::MagicubeBalance,
+                Some(balance),
+                None,
+                field_f64(data, "total_balance"),
+                false,
+                Some("MAGICUBE"),
+                None,
+                Some(endpoint.to_string()),
+                fetched_at,
+                latency_ms,
+            ) {
+                Ok(quota) => quota,
+                Err(_) => invalid(),
+            }
+        }
+        other => quiet_at(QuotaProbeStatus::Error, Some(format!("HTTP {other}"))),
+    }
+}
+
+/// Fetch the fixed magicube balance endpoint and map the response.
+async fn probe_magicube_balance(
+    client: &reqwest::Client,
+    api_key: &str,
+    start: Instant,
+    fetched_at: i64,
+) -> SiteQuota {
+    let latency = || start.elapsed().as_millis() as u64;
+    let url = magicube_balance_url();
+    let response = match client
+        .get(&url)
+        .bearer_auth(api_key)
+        .header("Accept", "application/json")
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(error) => {
+            let message = if error.is_timeout() {
+                "request timed out".to_string()
+            } else {
+                error.to_string()
+            };
+            return quiet(
+                QuotaProbeStatus::Error,
+                Some(sanitize_error(&message, api_key)),
+                latency(),
+                Some(url),
+            );
+        }
+    };
+    let status = response.status().as_u16();
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return quiet(
+                QuotaProbeStatus::Error,
+                Some(sanitize_error(&error.to_string(), api_key)),
+                latency(),
+                Some(url),
+            );
+        }
+    };
+    let slice = if bytes.len() > MAX_BODY_BYTES {
+        &bytes[..MAX_BODY_BYTES]
+    } else {
+        &bytes
+    };
+    let body = String::from_utf8_lossy(slice).into_owned();
+    magicube_quota(status, &body, fetched_at, latency(), &url)
+}
+
 /// Sub2API 钱包余额探测：按候选 origin 依次尝试 `GET {origin}/v1/usage`。
 ///
 /// 只在标准链最终判定「不支持」之后调用，保证 new-api 站点零额外请求
@@ -1717,6 +1883,21 @@ pub async fn probe_quota(
             probe_opencode_go_usage(&client, &preview.codex_base_url, api_key, start, fetched_at)
                 .await,
         );
+    }
+
+    // 魔搭只查官方魔粒余额端点，同样不进标准 billing/token/status 链；凭据就用
+    // 站点自己的 API Key（官方规范里推理与余额共用同一种 bearerAuth）。
+    if is_modelscope_base(&site.base_url) {
+        if api_key.trim().is_empty() {
+            return Ok(quiet(
+                QuotaProbeStatus::Unauthorized,
+                None,
+                start.elapsed().as_millis() as u64,
+                None,
+            ));
+        }
+        let client = crate::http_client::build_client(settings, PROBE_TIMEOUT)?;
+        return Ok(probe_magicube_balance(&client, api_key, start, fetched_at).await);
     }
 
     if api_key.trim().is_empty() {
@@ -1810,6 +1991,22 @@ mod tests {
     impl Drop for OpencodeUrlGuard {
         fn drop(&mut self) {
             OPENCODE_GO_URL_OVERRIDE.with(|cell| *cell.borrow_mut() = None);
+        }
+    }
+
+    /// Sets the magicube balance endpoint override for the current test thread.
+    struct MagicubeUrlGuard;
+
+    impl MagicubeUrlGuard {
+        fn set(url: String) -> Self {
+            MAGICUBE_URL_OVERRIDE.with(|cell| *cell.borrow_mut() = Some(url));
+            Self
+        }
+    }
+
+    impl Drop for MagicubeUrlGuard {
+        fn drop(&mut self) {
+            MAGICUBE_URL_OVERRIDE.with(|cell| *cell.borrow_mut() = None);
         }
     }
 
@@ -4015,6 +4212,297 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(quota.status, QuotaProbeStatus::Unauthorized);
+        assert!(requests.lock().unwrap().is_empty());
+    }
+
+    fn modelscope_site() -> SiteRow {
+        newapi_site("https://api-inference.modelscope.cn/v1")
+    }
+
+    #[test]
+    fn modelscope_base_detection() {
+        assert!(is_modelscope_base("https://api-inference.modelscope.cn/v1"));
+        assert!(is_modelscope_base("https://api-inference.modelscope.cn"));
+        assert!(is_modelscope_base("https://api-inference.modelscope.cn/v1/"));
+        assert!(is_modelscope_base("https://api-inference.modelscope.cn/v1?x=1"));
+        // 只认推理 host；站点主站与形似 host 都不算
+        assert!(!is_modelscope_base("https://modelscope.cn/v1"));
+        assert!(!is_modelscope_base("https://www.modelscope.cn/v1"));
+        assert!(!is_modelscope_base("https://api-inference.modelscope.cn.evil.com/v1"));
+        assert!(!is_modelscope_base("https://evil.com/api-inference.modelscope.cn/v1"));
+        assert!(!is_modelscope_base("http://api-inference.modelscope.cn/v1"));
+        assert!(!is_modelscope_base("ftp://api-inference.modelscope.cn/v1"));
+        assert!(!is_modelscope_base("not a url"));
+    }
+
+    #[test]
+    fn magicube_balance_url_is_a_constant_not_derived_from_base_url() {
+        // 余额端点与推理端点不同域，必须写死；从 base_url 派生等于把用户可控 host
+        // 拼进带 Bearer 的请求。
+        assert_eq!(
+            magicube_balance_url(),
+            "https://modelscope.cn/openapi/v1/magicubes/balance"
+        );
+        assert_eq!(magicube_balance_url(), MAGICUBE_BALANCE_URL);
+    }
+
+    #[test]
+    fn magicube_quota_available_maps_balances_onto_point_fields() {
+        let quota = magicube_quota(
+            200,
+            r#"{"success":true,"request_id":"r1","data":{"total_balance":1200.75,"available_balance":1000.5,"frozen_amount":200.25}}"#,
+            1_767_000_000_000,
+            7,
+            MAGICUBE_BALANCE_URL,
+        );
+        assert_eq!(quota.status, QuotaProbeStatus::Available);
+        assert_eq!(quota.source, Some(QuotaSource::MagicubeBalance));
+        assert_eq!(quota.unit.as_deref(), Some("MAGICUBE"));
+        assert_eq!(quota.remaining_usd, Some(1000.5));
+        assert_eq!(quota.total_usd, Some(1200.75));
+        // 冻结额与「已花费」无关：不显示，也不用它凑数。
+        assert_eq!(quota.used_usd, None);
+        assert!(!quota.unlimited);
+        assert_eq!(quota.expires_at, None);
+        assert_eq!(quota.windows, Vec::new());
+        assert_eq!(quota.endpoint.as_deref(), Some(MAGICUBE_BALANCE_URL));
+    }
+
+    #[test]
+    fn magicube_quota_accepts_available_balance_without_total() {
+        let quota = magicube_quota(
+            200,
+            r#"{"success":true,"data":{"available_balance":42}}"#,
+            1,
+            2,
+            "u",
+        );
+        assert_eq!(quota.status, QuotaProbeStatus::Available);
+        assert_eq!(quota.remaining_usd, Some(42.0));
+        assert_eq!(quota.total_usd, None);
+    }
+
+    /// 状态映射表：只有「200 + 有限数值 available_balance」才是成功，其余一律不兜底成 0。
+    #[test]
+    fn magicube_quota_mapping_table() {
+        let cases: &[(&str, &str, QuotaProbeStatus)] = &[
+            ("missing data", r#"{"success":true}"#, QuotaProbeStatus::InvalidData),
+            (
+                "null data",
+                r#"{"success":true,"data":null}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "missing balance",
+                r#"{"success":true,"data":{"total_balance":10}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "non numeric balance",
+                r#"{"success":true,"data":{"available_balance":"abc"}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "nan balance",
+                r#"{"success":true,"data":{"available_balance":"NaN"}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "infinity balance",
+                r#"{"success":true,"data":{"available_balance":"Infinity"}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "object balance",
+                r#"{"success":true,"data":{"available_balance":{}}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "negative balance",
+                r#"{"success":true,"data":{"available_balance":-5}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "inconsistent totals",
+                r#"{"success":true,"data":{"available_balance":20,"total_balance":10}}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            (
+                "success false",
+                r#"{"success":false,"code":"Throttling","message":"no"}"#,
+                QuotaProbeStatus::InvalidData,
+            ),
+            ("html body", "<html><body>hi</body></html>", QuotaProbeStatus::InvalidData),
+            ("broken json", "{", QuotaProbeStatus::InvalidData),
+            ("unauthorized 401", "{}", QuotaProbeStatus::Unauthorized),
+            ("forbidden 403", "{}", QuotaProbeStatus::Unauthorized),
+            ("not found 404", "{}", QuotaProbeStatus::Error),
+            ("server error 500", "{}", QuotaProbeStatus::Error),
+            ("bad gateway 502", "down", QuotaProbeStatus::Error),
+        ];
+        for (name, body, expected) in cases {
+            let status: u16 = match *name {
+                "unauthorized 401" => 401,
+                "forbidden 403" => 403,
+                "not found 404" => 404,
+                "server error 500" => 500,
+                "bad gateway 502" => 502,
+                _ => 200,
+            };
+            let quota = magicube_quota(status, body, 1, 2, "u");
+            assert_eq!(&quota.status, expected, "case `{name}` (HTTP {status})");
+            assert_eq!(quota.remaining_usd, None, "case `{name}` must not fabricate a balance");
+            assert_eq!(quota.total_usd, None, "case `{name}`");
+            assert_eq!(quota.source, None, "case `{name}`");
+            assert!(!quota.unlimited, "case `{name}`");
+        }
+    }
+
+    #[test]
+    fn magicube_quota_error_text_carries_no_token_or_upstream_message() {
+        // 只有状态码与 code 这类稳定标识可以外流；上游自由文本可能回显请求头。
+        let leaked = magicube_quota(
+            500,
+            r#"{"success":false,"code":"Internal","message":"Bearer sk-super-secret rejected"}"#,
+            1,
+            2,
+            "u",
+        );
+        assert_eq!(leaked.error.as_deref(), Some("HTTP 500"));
+
+        let rejected = magicube_quota(
+            200,
+            r#"{"success":false,"code":"InvalidToken","message":"Bearer sk-super-secret rejected"}"#,
+            1,
+            2,
+            "u",
+        );
+        assert_eq!(rejected.error.as_deref(), Some("code=InvalidToken"));
+
+        let codeless = magicube_quota(200, r#"{"success":false}"#, 1, 2, "u");
+        assert_eq!(codeless.error.as_deref(), Some("success=false"));
+
+        for quota in [leaked, rejected, codeless] {
+            assert!(
+                !quota
+                    .error
+                    .unwrap_or_default()
+                    .contains("sk-super-secret"),
+                "error text must never echo the API key"
+            );
+        }
+    }
+
+    #[test]
+    fn magicube_quota_truncates_a_runaway_code_field() {
+        let code = "x".repeat(400);
+        let quota = magicube_quota(200, &format!(r#"{{"success":false,"code":"{code}"}}"#), 1, 2, "u");
+        let error = quota.error.unwrap();
+        assert!(error.starts_with("code="));
+        assert!(error.chars().count() <= 64 + "code=".chars().count());
+        assert!(!error.contains('\n'));
+    }
+
+    #[test]
+    fn allows_empty_key_probe_covers_both_dedicated_hosts() {
+        assert!(allows_empty_key_probe("https://opencode.ai/zen/go/v1"));
+        assert!(allows_empty_key_probe("https://api-inference.modelscope.cn/v1"));
+        // 其余站点仍在命令层短路，不给通用链发空 key 请求。
+        assert!(!allows_empty_key_probe("https://api.opencode.ai/zen/go/v1"));
+        assert!(!allows_empty_key_probe("https://relay.example.com/v1"));
+        assert!(!allows_empty_key_probe("not a url"));
+    }
+
+    #[tokio::test]
+    async fn magicube_probe_returns_balance_from_mock_server() {
+        let body = r#"{"success":true,"request_id":"r1","data":{"total_balance":1200.75,"available_balance":1000.5,"frozen_amount":200.25}}"#;
+        let (base, _requests) = recording_server("200 OK", body).await;
+        let _guard = MagicubeUrlGuard::set(format!("{base}/openapi/v1/magicubes/balance"));
+        let before = Utc::now().timestamp_millis();
+        let quota = probe_quota(&modelscope_site(), "sk-modelscope", &opencode_settings(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(quota.status, QuotaProbeStatus::Available);
+        assert_eq!(quota.source, Some(QuotaSource::MagicubeBalance));
+        assert_eq!(quota.unit.as_deref(), Some("MAGICUBE"));
+        assert_eq!(quota.remaining_usd, Some(1000.5));
+        assert_eq!(quota.total_usd, Some(1200.75));
+        assert!(quota.fetched_at >= before);
+    }
+
+    #[tokio::test]
+    async fn magicube_route_skips_billing_and_newapi_probe_paths() {
+        let body = r#"{"success":true,"data":{"available_balance":42}}"#;
+        let (base, requests) = recording_server("200 OK", body).await;
+        let _guard = MagicubeUrlGuard::set(format!("{base}/openapi/v1/magicubes/balance"));
+        // 传入 newapi 凭据也必须被忽略：魔搭只用站点自己的 API Key。
+        let quota = probe_quota(
+            &modelscope_site(),
+            "sk-modelscope",
+            &opencode_settings(),
+            Some(("access-token", "42")),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(quota.source, Some(QuotaSource::MagicubeBalance));
+        let recorded = requests.lock().unwrap().clone();
+        assert_eq!(recorded.len(), 1, "only the balance endpoint should be requested");
+        assert!(recorded[0].starts_with("GET /openapi/v1/magicubes/balance "));
+        assert!(recorded[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sk-modelscope"));
+        assert!(!recorded.iter().any(|r| r.contains("/dashboard/billing")));
+        assert!(!recorded.iter().any(|r| r.contains("/api/usage/token")));
+        assert!(!recorded.iter().any(|r| r.contains("/api/user/self")));
+    }
+
+    #[tokio::test]
+    async fn magicube_probe_maps_http_status_without_fabricating_balance() {
+        for (status, expected) in [
+            ("401 Unauthorized", QuotaProbeStatus::Unauthorized),
+            ("403 Forbidden", QuotaProbeStatus::Unauthorized),
+            ("500 Internal Server Error", QuotaProbeStatus::Error),
+            ("200 OK", QuotaProbeStatus::InvalidData),
+        ] {
+            let (base, _requests) = recording_server(status, r#"{"success":true,"data":{}}"#).await;
+            let _guard = MagicubeUrlGuard::set(format!("{base}/openapi/v1/magicubes/balance"));
+            let quota = probe_quota(&modelscope_site(), "sk-x", &opencode_settings(), None)
+                .await
+                .unwrap();
+            assert_eq!(quota.status, expected, "upstream {status}");
+            assert_eq!(quota.remaining_usd, None, "upstream {status}");
+        }
+    }
+
+    #[tokio::test]
+    async fn magicube_probe_transport_failure_is_error_without_token() {
+        // 端口探测前先释放监听，得到确定性的「连不上」而不是 8 秒超时。
+        let (base, listener) = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            (base, listener)
+        };
+        drop(listener);
+        let _guard = MagicubeUrlGuard::set(format!("{base}/openapi/v1/magicubes/balance"));
+        let quota = probe_quota(&modelscope_site(), "sk-super-secret", &opencode_settings(), None)
+            .await
+            .unwrap();
+        assert_eq!(quota.status, QuotaProbeStatus::Error);
+        let error = quota.error.unwrap_or_default();
+        assert!(!error.contains("sk-super-secret"), "error leaked the key: {error}");
+    }
+
+    #[tokio::test]
+    async fn magicube_empty_key_is_unauthorized_without_request() {
+        let (base, requests) = recording_server("200 OK", "{}").await;
+        let _guard = MagicubeUrlGuard::set(format!("{base}/openapi/v1/magicubes/balance"));
+        let quota = probe_quota(&modelscope_site(), "  ", &opencode_settings(), None)
+            .await
+            .unwrap();
+        assert_eq!(quota.status, QuotaProbeStatus::Unauthorized);
+        assert_eq!(quota.remaining_usd, None);
         assert!(requests.lock().unwrap().is_empty());
     }
 }

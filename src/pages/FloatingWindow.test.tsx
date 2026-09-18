@@ -107,7 +107,7 @@ describe("FloatingWindow", () => {
     vi.useRealTimers();
   });
 
-  it("lists site balances in the four display shapes", async () => {
+  it("lists site balances in the five display shapes", async () => {
     render(
       <Wrapper>
         <FloatingWindow />
@@ -126,6 +126,8 @@ describe("FloatingWindow", () => {
     expect(cell("Unlimited C").getByText("无限")).toBeInTheDocument();
     // 未知
     expect(cell("Unknown D").getByText("不可用")).toBeInTheDocument();
+    // 魔粒按点数计，不能被拼成美元
+    expect(cell("Magicube F").getByText("1,000.5 魔粒")).toBeInTheDocument();
   });
 
   it("shows the last update time once balances are loaded", async () => {

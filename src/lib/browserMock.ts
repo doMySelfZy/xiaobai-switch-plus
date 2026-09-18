@@ -49,7 +49,7 @@ import type {
 import type { AgentRules, AgentRulesApplyResult } from "@/types/rules";
 import type { LocalProxyRequestLogEntry, LocalProxyStatus, ProxyHeader } from "@/types/proxy";
 import { keyPrefix, normalizeBaseUrl } from "./urlNormalize";
-import { isOpenCodeGoBase } from "./siteProviderKinds";
+import { isModelScopeBase, isOpenCodeGoBase } from "./siteProviderKinds";
 
 const DEFAULT_SETTINGS: AppSettings = {
   language: "zh-CN",
@@ -500,6 +500,28 @@ async function mockProbeQuota(site: Site): Promise<SiteQuota> {
         },
       ],
     };
+  }
+  if (isModelScopeBase(site.baseUrl)) {
+    // 与 Rust `magicube_quota` 同形：魔粒是点数口径，借用 remaining/total 槽位。
+    const base: SiteQuota = {
+      status: "available",
+      remainingUsd: 1000.5,
+      usedUsd: null,
+      totalUsd: 1200.75,
+      unlimited: false,
+      unit: "MAGICUBE",
+      expiresAt: null,
+      source: "magicube_balance",
+      endpoint: "https://modelscope.cn/openapi/v1/magicubes/balance",
+      fetchedAt: now(),
+      latencyMs: 11,
+      error: null,
+    };
+    // 空 key 也发探测：后端拿得到可诊断的 401，而不是「无数据」。
+    if (!site.hasKey) {
+      return { ...base, status: "unauthorized", remainingUsd: null, totalUsd: null, source: null };
+    }
+    return base;
   }
   if (!site.hasKey || /no-quota/i.test(site.baseUrl) || /no-quota/i.test(site.name)) {
     return {
@@ -1635,6 +1657,27 @@ export async function handleBrowserCommand<T>(
             fetchedAt: 1,
             latencyMs: 0,
             error: "unauthorized: invalid api key",
+            windows: [],
+          },
+        },
+        {
+          siteId: "s6",
+          siteName: "Magicube F",
+          enabled: true,
+          sortOrder: 5,
+          quota: {
+            status: "available",
+            remainingUsd: 1000.5,
+            usedUsd: null,
+            totalUsd: 1200.75,
+            unlimited: false,
+            unit: "MAGICUBE",
+            expiresAt: null,
+            source: "magicube_balance",
+            endpoint: "https://modelscope.cn/openapi/v1/magicubes/balance",
+            fetchedAt: 1,
+            latencyMs: 11,
+            error: null,
             windows: [],
           },
         },

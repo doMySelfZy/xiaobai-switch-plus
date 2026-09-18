@@ -360,6 +360,8 @@ pub enum QuotaSource {
     OpencodeGo,
     /// Sub2API 站点的 `/v1/usage` 钱包余额。
     Sub2Api,
+    /// 魔搭（ModelScope）魔粒账户余额，口径是点数而不是金额。
+    MagicubeBalance,
 }
 
 /// One usage window of an OpenCode Go plan (5-hour / weekly / monthly).

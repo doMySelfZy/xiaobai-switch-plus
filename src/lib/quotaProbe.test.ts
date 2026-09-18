@@ -10,6 +10,7 @@ import {
   formatUsd,
   isBalanceQuotaSummary,
   isQuotaCacheFresh,
+  normalizeQuotaUnit,
   QUOTA_TTL_MS,
   quotaCacheKey,
   quotaRemainingPercent,
@@ -60,6 +61,43 @@ describe("quotaProbe helpers", () => {
       unit: null,
       unitI18nKey: "sites.quotaUnitRaw",
     });
+  });
+
+  it("normalizes every magicube spelling onto one unit", () => {
+    expect(normalizeQuotaUnit("MAGICUBE")).toBe("MAGICUBE");
+    expect(normalizeQuotaUnit("magicubes")).toBe("MAGICUBE");
+    expect(normalizeQuotaUnit("魔粒")).toBe("MAGICUBE");
+  });
+
+  it("formats magicube balances as points with no currency sign", () => {
+    expect(formatQuotaAmountParts(1000.5, "MAGICUBE")).toEqual({
+      value: "1,000.5",
+      unit: null,
+      unitI18nKey: "sites.quotaUnitMagicube",
+    });
+    // 上游给几位小数就显示几位，但最多 2 位。
+    expect(formatQuotaAmountParts(42, "MAGICUBE").value).toBe("42");
+    expect(formatQuotaAmountParts(1234.567, "MAGICUBE").value).toBe("1,234.57");
+
+    const zh = vi.fn(
+      (key: string) => (key === "sites.quotaUnitMagicube" ? "魔粒" : key),
+    ) as unknown as TFunction;
+    const en = vi.fn(
+      (key: string) => (key === "sites.quotaUnitMagicube" ? "Magicubes" : key),
+    ) as unknown as TFunction;
+    const zhText = formatQuotaAmountLocalized(1000.5, "MAGICUBE", zh);
+    const enText = formatQuotaAmountLocalized(1000.5, "MAGICUBE", en);
+    expect(zhText).toBe("1,000.5 魔粒");
+    expect(enText).toBe("1,000.5 Magicubes");
+    // 魔粒既不是金额也不是次数，任何货币符号都会读错口径。
+    expect(zhText).not.toMatch(/[$¥]/);
+    expect(enText).not.toMatch(/[$¥]/);
+  });
+
+  it("labels a magicube amount as magicube in the non-i18n formatter", () => {
+    // formatQuotaAmount 只有硬编码回退名；曾经所有 unitI18nKey 都被印成 RAW_QUOTA。
+    expect(formatQuotaAmount(1000.5, "MAGICUBE")).toBe("1,000.5 MAGICUBE");
+    expect(formatQuotaAmount(24_035, "RAW_QUOTA")).toBe("24,035.00 RAW_QUOTA");
   });
 
   it("builds a cache key only from quota-relevant site configuration", () => {

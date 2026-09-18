@@ -83,6 +83,7 @@
     "quotaUnlimited": "此 Key 不限额",
     "quotaUnknown": "额度未知",
     "quotaUnitRaw": "额度点数",
+    "quotaUnitMagicube": "魔粒",
     "quotaExpires": "到期 {{date}}",
     "quotaUpdated": "更新于 {{time}}",
     "quotaUpdatedJustNow": "刚刚更新",

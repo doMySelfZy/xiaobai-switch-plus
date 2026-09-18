@@ -57,6 +57,25 @@ saveServer: async (input) => {
 
 错误状态不应只看余额 `status`：如果保留旧余额但 `quota.error` 非空，该站点本轮余额刷新仍算失败。
 
+### 服务商识别与额度单位单一来源
+
+「这个站点属于哪个服务商」只有一个判据：**Base URL 的 host**。它不写进站点记录，也不建列。
+
+- 前端判定只在 `src/lib/siteProviderKinds.ts`；模板目录只在 `src/lib/sitePresets.ts`（纯数据）。
+  `browserMock.ts` 必须 `import` 前者，**不得**再抄一份 `isXxxBase`。
+- 后端对应 `quota_probe::is_opencode_go_base` / `is_modelscope_base`，两边同一口径：只接受
+  `https`、host **严格相等**。加服务商时两边都要补反例测试（`api.opencode.ai`、
+  `xxx.evil.com`、`http://`、`/zen/goose` 这类形似值）。
+- 免除 newapi 凭据的显示条件走 `quotaCredentialHint(当前第一项 Base URL)`，只看输入、不看用户点过哪个模板。
+  命中免除时**保存要省略 `newapiAccessToken` / `newapiUserId`**（`None` = 保留、`Some("")` = 清空），
+  否则切一次 host 就把既有凭据洗掉。
+- 空 key 的专用渠道仍要发探测：命令层放行条件用 `quota_probe::allows_empty_key_probe`（不是只看
+  opencode 那一个 host），否则会落到 `empty_key_result()`，用户看不到可诊断的 401。
+- 额度金额的出口只有 `formatQuotaAmountLocalized`（列表行 / 详情行 / 悬浮窗）。任何一处自己拼
+  `` `$${n.toFixed(2)}` `` 都会把点数（`RAW_QUOTA`）、魔粒（`MAGICUBE`）、人民币（`CNY`）读成美元。
+  新 `unit` 值必须同时进 `normalizeQuotaUnit` 与 `formatQuotaAmountParts`，否则走未知单位兜底、
+  把上游原串（`MAGICUBE`）直接印进文案。
+
 ## 与后端一致性的陷阱
 
 前端字段名必须与 Rust 的 serde 命名**逐字对齐**（Rust 端统一
