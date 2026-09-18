@@ -7,7 +7,7 @@ import {
   resetBrowserMock,
   seedTargetStatuses,
 } from "@/lib/browserMock";
-import { QUOTA_TTL_MS, SITE_QUOTA_AUTO_REFRESH_MS } from "@/lib/quotaProbe";
+import { QUOTA_TTL_MS } from "@/lib/quotaProbe";
 import { useApplyStore, useSiteStore, useUIStore } from "@/stores";
 import { resetQuotaInflight } from "@/stores/siteStore";
 import type { TargetLiveStatus } from "@/types/domain";
@@ -820,7 +820,7 @@ describe("SitesPage", () => {
     probe.mockRestore();
   });
 
-  it("auto-refreshes list quota on an interval without bypassing the TTL", async () => {
+  it("does not create a page-local refresh interval", async () => {
     await act(async () => {
       await useSiteStore.getState().createSite({
         name: "Alpha",
@@ -828,14 +828,7 @@ describe("SitesPage", () => {
         apiKey: "sk-test",
       });
     });
-    // 捕获轮询回调而不是真的等 2 分钟：断言注册了正确间隔，再手动触发它。
-    const intervals: Array<{ fn: () => void; ms: number }> = [];
-    const setIntervalSpy = vi
-      .spyOn(window, "setInterval")
-      .mockImplementation(((fn: () => void, ms?: number) => {
-        intervals.push({ fn, ms: ms ?? 0 });
-        return 0 as unknown as ReturnType<typeof window.setInterval>;
-      }) as unknown as typeof window.setInterval);
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
 
     render(
       <Wrapper>
@@ -843,85 +836,8 @@ describe("SitesPage", () => {
       </Wrapper>,
     );
     await act(async () => {});
-    const afterMount = getBrowserQuotaProbeCallCount();
-    expect(afterMount).toBe(1);
-
-    const auto = intervals.find((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS);
-    expect(auto).toBeDefined();
-
-    // 后台轮询不 force：5 分钟 TTL 内再触发一次也不该真的发请求。
-    await act(async () => {
-      auto!.fn();
-    });
-    expect(getBrowserQuotaProbeCallCount()).toBe(afterMount);
-
-    // TTL 过期后非强制刷新才允许穿透。
-    const siteId = useSiteStore.getState().sites[0]!.id;
-    const attempt = useSiteStore.getState().quotaAttemptBySite[siteId];
-    useSiteStore.setState({
-      quotaAttemptBySite: {
-        ...useSiteStore.getState().quotaAttemptBySite,
-        [siteId]: { ...attempt, fetchedAt: Date.now() - QUOTA_TTL_MS },
-      },
-    });
-    await act(async () => {
-      auto!.fn();
-    });
-    expect(getBrowserQuotaProbeCallCount()).toBeGreaterThan(afterMount);
-
-    setIntervalSpy.mockRestore();
-  });
-
-  it("does not probe quota while another page is the active one", async () => {
-    await act(async () => {
-      await useSiteStore.getState().createSite({
-        name: "Alpha",
-        baseUrl: "https://alpha.example.com",
-        apiKey: "sk-test",
-      });
-      // KeepAlive 让本页常驻：用户在别的页面时，本页不该打任何探测请求。
-      useUIStore.setState({ activePage: "mcp" });
-    });
-    const intervals: Array<{ fn: () => void; ms: number }> = [];
-    const setIntervalSpy = vi
-      .spyOn(window, "setInterval")
-      .mockImplementation(((fn: () => void, ms?: number) => {
-        intervals.push({ fn, ms: ms ?? 0 });
-        return 0 as unknown as ReturnType<typeof window.setInterval>;
-      }) as unknown as typeof window.setInterval);
-
-    render(
-      <Wrapper>
-        <SitesPage />
-      </Wrapper>,
-    );
-    await act(async () => {});
-    expect(getBrowserQuotaProbeCallCount()).toBe(0);
-    expect(intervals.some((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS)).toBe(false);
-
-    // 切回站点页：注册轮询并补一次非强制刷新。
-    await act(async () => {
-      useUIStore.setState({ activePage: "sites" });
-    });
-    await waitFor(() => {
-      expect(getBrowserQuotaProbeCallCount()).toBe(1);
-    });
-    const auto = intervals.find((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS);
-    expect(auto).toBeDefined();
-    // TTL 还新鲜：再补刷一次也不会真的发请求（后台刷新不 force）。
-    await act(async () => {
-      auto!.fn();
-    });
-    expect(getBrowserQuotaProbeCallCount()).toBe(1);
-
-    // 离开站点页：effect 随 pageVisible 清理，定时器不再注册。
-    await act(async () => {
-      useUIStore.setState({ activePage: "apply" });
-    });
-    expect(
-      intervals.filter((entry) => entry.ms === SITE_QUOTA_AUTO_REFRESH_MS).length,
-    ).toBe(1);
-
+    await waitFor(() => expect(getBrowserQuotaProbeCallCount()).toBe(1));
+    expect(setIntervalSpy.mock.calls.some(([, ms]) => ms === 30_000)).toBe(false);
     setIntervalSpy.mockRestore();
   });
 

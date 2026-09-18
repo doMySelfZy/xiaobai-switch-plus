@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "用于复核刷新入口、定时器与 i18n 约束"}
+{"file": ".trellis/spec/backend/index.md", "reason": "用于复核 Rust 刷新命令、缓存和测试约束"}

@@ -1,14 +1,16 @@
 import { create } from "zustand";
-import { invoke } from "@/lib/invoke";
+import { invoke, isTauri } from "@/lib/invoke";
 import type {
   AddSiteApiKeyInput,
   CreateSiteInput,
   DeepLinkSiteImportInput,
   DeepLinkSiteImportResult,
   FetchModelsResult,
+  RefreshAllSitesResult,
   Site,
   SiteModel,
   SiteQuota,
+  SiteQuotaSummary,
   SwitchRouteResult,
   SwitchSiteApiKeyResult,
   UpdateSiteApiKeyInput,
@@ -20,9 +22,41 @@ import { isQuotaCacheFresh, quotaCacheKey } from "@/lib/quotaProbe";
 import { useApplyStore } from "./applyStore";
 
 const quotaInflight = new Map<string, Promise<SiteQuota>>();
+const modelInflight = new Map<string, Promise<FetchModelsResult>>();
+const modelRequestVersion = new Map<string, number>();
+const MAX_MODEL_REFRESH_CONCURRENCY = 4;
+let refreshAllInflight: Promise<RefreshAllSitesResult> | null = null;
+
+function modelFetchKey(
+  siteId: string,
+  apiKeyId: string | null,
+  baseUrl: string,
+  quotaRevision: string,
+): string {
+  return `${siteId}:${apiKeyId ?? "active"}:${baseUrl}:${quotaRevision}`;
+}
+
+function nextModelRequestVersion(siteId: string): number {
+  const next = (modelRequestVersion.get(siteId) ?? 0) + 1;
+  modelRequestVersion.set(siteId, next);
+  return next;
+}
 
 export function resetQuotaInflight() {
   quotaInflight.clear();
+  modelInflight.clear();
+  modelRequestVersion.clear();
+  refreshAllInflight = null;
+}
+
+async function emitSitesRefreshFinished() {
+  if (!isTauri()) return;
+  try {
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("sites-refresh-finished");
+  } catch {
+    // Browser mode and older runtimes may not expose the event bridge.
+  }
 }
 
 interface SiteState {
@@ -40,7 +74,11 @@ interface SiteState {
   hydrated: boolean;
   /** True while any site is fetching models (aggregate; prefer the per-site maps). */
   fetchingModels: boolean;
+  /** True while the shared model + quota refresh is running. */
+  refreshingAll: boolean;
   fetchingModelsByKey: Record<string, boolean>;
+  /** Site IDs currently being refreshed (models + quota). */
+  refreshingSiteIds: string[];
   /**
    * Per-site "models are being refreshed" flag (covers both `fetchModels` and
    * `switchApiKey`). The previous list is intentionally kept in `modelsBySite`
@@ -68,7 +106,8 @@ interface SiteState {
   ) => Promise<SwitchRouteResult>;
   deleteSite: (id: string, cleanupTargets?: boolean) => Promise<void>;
   reorderSites: (ids: string[]) => Promise<void>;
-  fetchModels: (siteId: string) => Promise<FetchModelsResult>;
+  fetchModels: (siteId: string, apiKeyId?: string | null) => Promise<FetchModelsResult>;
+  refreshAllSites: () => Promise<RefreshAllSitesResult>;
   listModels: (siteId: string, opts?: { force?: boolean }) => Promise<SiteModel[]>;
   probeQuota: (siteId: string, opts?: { force?: boolean }) => Promise<SiteQuota>;
   setSelectedModel: (siteId: string, modelId: string) => Promise<void>;
@@ -96,6 +135,33 @@ function sitesWithInFlightFetch(loading: Record<string, boolean>): Record<string
   return bySite;
 }
 
+function errorMessage(error: unknown): string {
+  if (typeof error === "object" && error && "message" in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const runWorker = async () => {
+    while (true) {
+      const index = cursor++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, () => runWorker()),
+  );
+  return results;
+}
+
 function clearSiteQuotaState(state: SiteState, siteId: string) {
   for (const key of quotaInflight.keys()) {
     if (key.startsWith(`${siteId}:`)) quotaInflight.delete(key);
@@ -121,8 +187,10 @@ export const useSiteStore = create<SiteState>((set, get) => ({
   loading: false,
   hydrated: false,
   fetchingModels: false,
+  refreshingAll: false,
   fetchingModelsByKey: {},
   fetchingModelsBySite: {},
+  refreshingSiteIds: [],
   error: null,
   loadSites: async (opts) => {
     const hasCache = get().hydrated;
@@ -318,10 +386,18 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       throw e;
     }
   },
-  fetchModels: async (siteId) => {
+  fetchModels: (siteId, requestedApiKeyId) => {
     const site = get().sites.find((s) => s.id === siteId);
-    const apiKeyId = activeApiKeyId(site ?? null);
-    const fetchKey = `${siteId}:${apiKeyId ?? "active"}`;
+    const apiKeyId = requestedApiKeyId === undefined
+      ? activeApiKeyId(site ?? null)
+      : requestedApiKeyId;
+    const baseUrl = site?.baseUrl ?? "";
+    const quotaRevision = site?.quotaRevision ?? "";
+    const fetchKey = modelFetchKey(siteId, apiKeyId, baseUrl, quotaRevision);
+    const existing = modelInflight.get(fetchKey);
+    if (existing) return existing;
+
+    const requestVersion = nextModelRequestVersion(siteId);
     const inFlightKeys = { ...get().fetchingModelsByKey, [fetchKey]: true };
     set({
       fetchingModels: true,
@@ -330,58 +406,204 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       fetchingModelsBySite: sitesWithInFlightFetch(inFlightKeys),
       error: null,
     });
-    try {
-      const result = await invoke<FetchModelsResult>("fetch_site_models", { siteId, apiKeyId });
-      let models = Array.isArray(result.models) ? result.models : [];
-      if (models.length === 0) {
-        const listed = await invoke<SiteModel[]>("list_site_models", { siteId, apiKeyId });
-        if (Array.isArray(listed) && listed.length > 0) models = listed;
-      }
-      const current = get().sites.find((s) => s.id === siteId);
-      const resultKey = result.apiKeyId || apiKeyId;
-      const stillCurrent = !resultKey || activeApiKeyId(current ?? null) === resultKey;
-      if (stillCurrent) {
+
+    let run!: Promise<FetchModelsResult>;
+    run = (async (): Promise<FetchModelsResult> => {
+      try {
+        const result = await invoke<FetchModelsResult>("fetch_site_models", { siteId, apiKeyId });
+        let models = Array.isArray(result.models) ? result.models : [];
+        if (models.length === 0) {
+          const listed = await invoke<SiteModel[]>("list_site_models", { siteId, apiKeyId });
+          if (Array.isArray(listed) && listed.length > 0) models = listed;
+        }
+        const current = get().sites.find((s) => s.id === siteId);
+        const resultKey = result.apiKeyId || apiKeyId;
+        const stillCurrent =
+          requestVersion === modelRequestVersion.get(siteId) &&
+          current?.baseUrl === baseUrl &&
+          (!resultKey || activeApiKeyId(current ?? null) === resultKey);
+        if (stillCurrent) {
+          const selectedModelId = current?.apiKeys?.find((key) => key.id === resultKey)?.selectedModelId
+            ?? current?.selectedModelId
+            ?? null;
+          set({
+            modelsBySite: { ...get().modelsBySite, [siteId]: models },
+            sites: get().sites.map((s) =>
+              s.id === siteId
+                ? {
+                    ...s,
+                    selectedModelId,
+                    lastModelFetchAt: result.fetchedAt,
+                    lastModelFetchLatencyMs: result.latencyMs,
+                    lastModelFetchError: null,
+                    apiKeys: s.apiKeys?.map((key) =>
+                      key.id === resultKey
+                        ? { ...key, selectedModelId }
+                        : key,
+                    ),
+                  }
+                : s,
+            ),
+          });
+        }
+        return { ...result, models };
+      } catch (e) {
+        const msg = errorMessage(e);
+        const current = get().sites.find((s) => s.id === siteId);
+        const stillCurrent =
+          requestVersion === modelRequestVersion.get(siteId) &&
+          current?.baseUrl === baseUrl &&
+          (!apiKeyId || activeApiKeyId(current ?? null) === apiKeyId);
+        if (stillCurrent) {
+          set({
+            error: msg,
+            // 清空模型列表，让站点显示为不可用（红点）
+            modelsBySite: { ...get().modelsBySite, [siteId]: [] },
+            sites: get().sites.map((s) =>
+              s.id === siteId ? { ...s, lastModelFetchError: msg } : s,
+            ),
+          });
+        }
+        throw e;
+      } finally {
+        if (modelInflight.get(fetchKey) === run) modelInflight.delete(fetchKey);
+        const loading = { ...get().fetchingModelsByKey };
+        delete loading[fetchKey];
         set({
-          modelsBySite: { ...get().modelsBySite, [siteId]: models },
-          sites: get().sites.map((s) =>
-            s.id === siteId
-              ? {
-                  ...s,
-                  lastModelFetchAt: result.fetchedAt,
-                  lastModelFetchLatencyMs: result.latencyMs,
-                  lastModelFetchError: null,
-                }
-              : s,
-          ),
+          fetchingModelsByKey: loading,
+          fetchingModelsBySite: sitesWithInFlightFetch(loading),
+          fetchingModels: Object.values(loading).some(Boolean),
         });
       }
-      return { ...result, models };
-    } catch (e) {
-      const msg =
-        typeof e === "object" && e && "message" in e
-          ? String((e as { message: string }).message)
-          : String(e);
-      const current = get().sites.find((s) => s.id === siteId);
-      if (!apiKeyId || activeApiKeyId(current ?? null) === apiKeyId) {
-        set({
-          error: msg,
-          // 清空模型列表，让站点显示为不可用（红点）
-          modelsBySite: { ...get().modelsBySite, [siteId]: [] },
-          sites: get().sites.map((s) =>
-            s.id === siteId ? { ...s, lastModelFetchError: msg } : s,
-          ),
-        });
+    })();
+    modelInflight.set(fetchKey, run);
+    return run;
+  },
+  refreshAllSites: () => {
+    if (refreshAllInflight) return refreshAllInflight;
+
+    const run = (async (): Promise<RefreshAllSitesResult> => {
+      if (!useSiteStore.getState().hydrated) {
+        await get().loadSites({ soft: true });
       }
-      throw e;
-    } finally {
-      const loading = { ...get().fetchingModelsByKey };
-      delete loading[fetchKey];
-      set({
-        fetchingModelsByKey: loading,
-        fetchingModelsBySite: sitesWithInFlightFetch(loading),
-        fetchingModels: Object.values(loading).some(Boolean),
-      });
-    }
+      const enabledSites = useSiteStore
+        .getState()
+        .sites.filter((site) => site.enabled)
+        .map((site) => ({
+          id: site.id,
+          apiKeyId: activeApiKeyId(site),
+          quotaKey: quotaCacheKey(site),
+        }));
+
+      set({ refreshingAll: true });
+      try {
+        const quotaPromise = invoke<SiteQuotaSummary[]>("refresh_sites_quota").then(
+          (value) => ({ ok: true as const, value, error: null }),
+          (error) => ({ ok: false as const, value: [] as SiteQuotaSummary[], error }),
+        );
+        
+        // Mark all enabled sites as refreshing
+        const refreshingIds = enabledSites.map(s => s.id);
+        console.log('[refreshAllSites] Setting refreshingSiteIds:', refreshingIds);
+        set({ refreshingSiteIds: refreshingIds });
+        
+        const modelResults = await mapWithConcurrency(
+          enabledSites,
+          MAX_MODEL_REFRESH_CONCURRENCY,
+          async ({ id, apiKeyId }) => {
+            const startTime = Date.now();
+            try {
+              const result = await get().fetchModels(id, apiKeyId);
+              // Ensure minimum 300ms display time for the refresh indicator
+              const elapsed = Date.now() - startTime;
+              if (elapsed < 300) {
+                await new Promise(resolve => setTimeout(resolve, 300 - elapsed));
+              }
+              return { id, modelCount: result.models.length, ok: true, error: null };
+            } catch (error) {
+              // Ensure minimum 300ms display time even on error
+              const elapsed = Date.now() - startTime;
+              if (elapsed < 300) {
+                await new Promise(resolve => setTimeout(resolve, 300 - elapsed));
+              }
+              return { id, modelCount: 0, ok: false, error: errorMessage(error) };
+            } finally {
+              // Remove this site from refreshingSiteIds when its fetch completes
+              console.log(`[refreshAllSites] Removing site ${id} from refreshingSiteIds`);
+              set((state) => ({
+                refreshingSiteIds: state.refreshingSiteIds.filter(siteId => siteId !== id),
+              }));
+            }
+          },
+        );
+
+        const quotaResult = await quotaPromise;
+        const quotaSummaries = quotaResult.value;
+        const quotaError = quotaResult.ok ? null : errorMessage(quotaResult.error);
+
+        const quotaById = new Map(quotaSummaries.map((summary) => [summary.siteId, summary.quota]));
+        const quotaOkById = new Map(
+          quotaSummaries.map((summary) => [
+            summary.siteId,
+            summary.quota?.status === "available" && !summary.quota.error,
+          ]),
+        );
+        const sites = enabledSites.map(({ id, quotaKey }, index) => {
+          const quota = quotaById.get(id) ?? null;
+          const current = get().sites.find((site) => site.id === id);
+          const quotaOk = quotaError === null && Boolean(quotaOkById.get(id));
+          if (current && quota && quotaKey === quotaCacheKey(current)) {
+            const nextAttempt = {
+              ...get().quotaAttemptBySite,
+              [id]: quota,
+            };
+            const nextAttemptKeys = {
+              ...get().quotaAttemptCacheKeyBySite,
+              [id]: quotaKey,
+            };
+            const nextSuccess =
+              quota.status === "available"
+                ? {
+                    quotaBySite: { ...get().quotaBySite, [id]: quota },
+                    quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [id]: quotaKey },
+                  }
+                : {};
+            set({
+              quotaAttemptBySite: nextAttempt,
+              quotaAttemptCacheKeyBySite: nextAttemptKeys,
+              ...nextSuccess,
+            });
+          }
+          const model = modelResults[index];
+          return {
+            siteId: id,
+            modelCount: model.modelCount,
+            modelsOk: model.ok,
+            quotaOk,
+            modelError: model.error,
+            quotaError: quotaError ?? (quota?.error ?? (quotaOk ? null : "quota refresh failed")),
+          };
+        });
+        const successCount = sites.filter((site) => site.modelsOk && site.quotaOk).length;
+        const result = {
+          sites,
+          successCount,
+          failureCount: sites.length - successCount,
+        } satisfies RefreshAllSitesResult;
+        await emitSitesRefreshFinished();
+        return result;
+      } finally {
+        set({ refreshingAll: false });
+        // refreshingSiteIds is cleared per-site in the mapWithConcurrency callback
+      }
+    })();
+
+    refreshAllInflight = run;
+    const clearInflight = () => {
+      if (refreshAllInflight === run) refreshAllInflight = null;
+    };
+    void run.then(clearInflight, clearInflight);
+    return run;
   },
   listModels: async (siteId, opts) => {
     const site = get().sites.find((s) => s.id === siteId);
@@ -395,6 +617,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     ) {
       return cached ?? [];
     }
+    const requestVersion = nextModelRequestVersion(siteId);
     set({
       modelsLoadingBySite: { ...get().modelsLoadingBySite, [siteId]: true },
     });
@@ -402,7 +625,15 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       const models = await invoke<SiteModel[]>("list_site_models", { siteId, apiKeyId });
       const list = Array.isArray(models) ? models : [];
       const current = get().modelsBySite[siteId];
-      // Don't let a stale list overwrite a newer non-empty fetch.
+      const currentSite = get().sites.find((entry) => entry.id === siteId);
+      // A list read may race a network fetch or a site/key change. Only the
+      // newest request for the same current key may replace the cache.
+      if (
+        requestVersion !== modelRequestVersion.get(siteId) ||
+        activeApiKeyId(currentSite ?? null) !== apiKeyId
+      ) {
+        return current ?? list;
+      }
       if (!opts?.force && Array.isArray(current) && current.length > 0 && list.length === 0) {
         return current;
       }
@@ -410,7 +641,10 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       return list;
     } catch (e) {
       // Cache empty list so UI can leave skeleton state even on failure.
-      if (!Object.prototype.hasOwnProperty.call(get().modelsBySite, siteId)) {
+      if (
+        requestVersion === modelRequestVersion.get(siteId) &&
+        !Object.prototype.hasOwnProperty.call(get().modelsBySite, siteId)
+      ) {
         set({ modelsBySite: { ...get().modelsBySite, [siteId]: [] } });
       }
       throw e;

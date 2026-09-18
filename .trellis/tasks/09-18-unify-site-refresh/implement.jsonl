@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端刷新调度、store 状态与页面测试规范"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Rust command、缓存、并发与测试规范"}

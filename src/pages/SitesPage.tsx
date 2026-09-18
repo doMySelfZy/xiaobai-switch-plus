@@ -32,9 +32,8 @@ import { SiteApiKeySwitcher } from "@/components/sites/SiteApiKeySwitcher";
 import { SiteQuotaRow } from "@/components/sites/SiteQuotaRow";
 import type { Site } from "@/types/domain";
 import { isAppError } from "@/lib/invoke";
-import { SITE_QUOTA_AUTO_REFRESH_MS, quotaCacheKey } from "@/lib/quotaProbe";
+import { quotaCacheKey } from "@/lib/quotaProbe";
 import { useDeferredReady } from "@/hooks/useDeferredReady";
-import { usePageVisible } from "@/hooks/usePageVisible";
 import { targetKindLabelKey, targetsAppliedForSite } from "@/components/apply/TargetStatusCard";
 
 function protocolLabelKey(protocol: Site["protocol"]): string {
@@ -51,9 +50,11 @@ export function SitesPage() {
   const hydrated = useSiteStore((s) => s.hydrated);
   // per-site：某站点在拉模型时，只让它的刷新按钮转圈（全局布尔会让别的站点也转）。
   const fetchingModelsBySite = useSiteStore((s) => s.fetchingModelsBySite);
+  const refreshingAll = useSiteStore((s) => s.refreshingAll);
   const loadSites = useSiteStore((s) => s.loadSites);
   const listModels = useSiteStore((s) => s.listModels);
   const fetchModels = useSiteStore((s) => s.fetchModels);
+  const refreshAllSites = useSiteStore((s) => s.refreshAllSites);
   const probeQuota = useSiteStore((s) => s.probeQuota);
   const quotaBySite = useSiteStore((s) => s.quotaBySite);
   const quotaAttemptBySite = useSiteStore((s) => s.quotaAttemptBySite);
@@ -72,9 +73,6 @@ export function SitesPage() {
   const setApplyTab = useUIStore((s) => s.setApplyTab);
   const setApplyPrefillSiteId = useUIStore((s) => s.setApplyPrefillSiteId);
 
-  // KeepAlivePages 让本页常驻：只有"当前页正是站点页且窗口可见"才算真的在看。
-  const pageVisible = usePageVisible("sites");
-
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Site | null>(null);
   const [forceAdvancedOpen, setForceAdvancedOpen] = useState(false);
@@ -87,31 +85,6 @@ export function SitesPage() {
     // Soft when already hydrated so revisiting sites page doesn't flash loading.
     void loadSites({ soft: useSiteStore.getState().hydrated });
   }, [loadSites]);
-
-  // 列表额度摘要预取 + 自动刷新：probeQuota 自带 5 分钟 TTL + in-flight 去重，
-  // 就是节流层，不要再包一层缓存。失败静默（错误态只在右侧详情展示）。依赖用
-  // 站点 id 串，避免对象引用变化导致重复触发。
-  // 轮询只在「本页真正可见」时跑：KeepAlive 让页面常驻，只判 document.visibilityState
-  // 会在用户看别的页面时继续发请求。后台刷新一律不 force——TTL 该挡住就挡住；
-  // 只有手动刷新按钮（handleRefreshQuota）才 force。pageVisible 变真时补一次非强制刷新，
-  // 既覆盖"切回本页"，也覆盖"窗口重新可见"。
-  // 优化：间隔从 2 分钟降至 30 秒，且只轮询当前选中的站点以降低网络噪音。
-  useEffect(() => {
-    if (!pageVisible || !selectedSiteId) return;
-    const selected = useSiteStore.getState().sites.find((s) => s.id === selectedSiteId);
-    if (!selected?.enabled) return;
-
-    const refresh = () => {
-      const current = useSiteStore.getState().sites.find((s) => s.id === selectedSiteId);
-      if (current?.enabled) {
-        void probeQuota(selectedSiteId).catch(() => undefined);
-      }
-    };
-
-    refresh();
-    const timer = window.setInterval(refresh, SITE_QUOTA_AUTO_REFRESH_MS);
-    return () => window.clearInterval(timer);
-  }, [selectedSiteId, probeQuota, pageVisible]);
 
   useEffect(() => {
     if (!pendingSiteForm) return;
@@ -160,45 +133,24 @@ export function SitesPage() {
     });
   }, [selectedSiteId, listModels, setSelectedModel]);
 
-  // 详情额度探测与窗口 focus 探测同样只在「本页真正可见」时发请求：页面常驻，
-  // 用户在别处时不该替这个页面打探测。回到本页时 pageVisible 变真、effect 重跑，
-  // 自然补一次（非 force，走 TTL）。
+  // 进入详情时补一次余额读取；周期刷新由 AppInner 的统一任务负责。
   useEffect(() => {
-    if (!pageVisible || !selected?.id || !selected.hasKey) return;
+    if (!selected?.id || !selected.hasKey) return;
     void probeQuota(selected.id).catch(() => {
       message.error(t("sites.quotaRefreshFailed"));
     });
-  }, [
-    pageVisible,
-    selected?.id,
-    selected?.baseUrl,
-    selected?.quotaRevision,
-    selected?.hasKey,
-    probeQuota,
-    message,
-    t,
-  ]);
+  }, [selected?.id, selected?.baseUrl, selected?.quotaRevision, selected?.hasKey, probeQuota, message, t]);
 
   useEffect(() => {
-    if (!pageVisible || !selected?.id || !selected.hasKey) return;
+    if (!selected?.id || !selected.hasKey) return;
     const refreshOnFocus = () => {
-      // 回到窗口只补一次非强制刷新，不绕过 5 分钟 TTL。
       void probeQuota(selected.id).catch(() => {
         message.error(t("sites.quotaRefreshFailed"));
       });
     };
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
-  }, [
-    pageVisible,
-    selected?.id,
-    selected?.baseUrl,
-    selected?.quotaRevision,
-    selected?.hasKey,
-    probeQuota,
-    message,
-    t,
-  ]);
+  }, [selected?.id, selected?.baseUrl, selected?.quotaRevision, selected?.hasKey, probeQuota, message, t]);
 
   const handleFetchModels = useCallback(
     async (site: Site) => {
@@ -233,56 +185,23 @@ export function SitesPage() {
     }
   }, [selected, probeQuota, message, t]);
 
-  // 全局刷新：批量刷新所有站点的模型列表（带重试）
-  const [refreshingAll, setRefreshingAll] = useState(false);
-
   const handleRefreshAll = useCallback(async () => {
-    if (refreshingAll) return;
-    
-    setRefreshingAll(true);
-    
-    // 只刷新已启用的站点
-    const enabledSites = sites.filter(s => s.enabled);
-    
-    // 带重试的刷新函数
-    const fetchWithRetry = async (site: Site, maxRetries = 2): Promise<boolean> => {
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          await fetchModels(site.id);
-          return true;
-        } catch (e) {
-          if (attempt === maxRetries) {
-            return false;
-          }
-          // 等待后重试
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+    try {
+      const result = await refreshAllSites();
+      if (result.failureCount === 0) {
+        message.success(t("sites.refreshAllSuccess", { count: result.successCount }));
+      } else {
+        message.warning(
+          t("sites.refreshAllPartial", {
+            success: result.successCount,
+            total: result.sites.length,
+          }),
+        );
       }
-      return false;
-    };
-
-    // 并行刷新所有站点
-    const results = await Promise.all(
-      enabledSites.map(site => fetchWithRetry(site))
-    );
-
-    setRefreshingAll(false);
-
-    // 统计结果
-    const successCount = results.filter(r => r).length;
-    const failureCount = results.filter(r => !r).length;
-
-    if (failureCount === 0) {
-      message.success(t("sites.refreshAllSuccess", { count: successCount }));
-    } else {
-      message.warning(
-        t("sites.refreshAllPartial", { 
-          success: successCount, 
-          total: enabledSites.length 
-        })
-      );
+    } catch (error) {
+      message.error(isAppError(error) ? error.message : t("sites.modelListFetchRetry"));
     }
-  }, [refreshingAll, sites, fetchModels, message, t]);
+  }, [refreshAllSites, message, t]);
 
   const handleSiteSaved = useCallback(
     (site: Site, isCreate: boolean) => {

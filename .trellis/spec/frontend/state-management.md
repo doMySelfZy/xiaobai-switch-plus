@@ -40,6 +40,19 @@ saveServer: async (input) => {
 **不同 webview 之间不共享 store**。悬浮窗是独立窗口，主窗口的 zustand 状态它读不到。
 需要共享时：后端持久化 + Tauri 事件通知（见 `hook-guidelines.md`）。
 
+### 统一站点刷新契约
+
+站点模型与余额刷新由主窗口 `AppInner` 持有一个定时器，入口统一为
+`useSiteStore.getState().refreshAllSites()`。站点页和悬浮窗不能各自创建周期任务：
+
+- `refreshAllSites()` 只筛选 `site.enabled === true` 的站点，刷新开始时捕获每站点 `activeApiKeyId`。
+- 模型请求按 `(siteId, apiKeyId, baseUrl, quotaRevision)` 做 in-flight 去重；结果写回前必须验证请求版本、当前 Base URL 和 active key 仍一致。
+- 批量模型请求要限制并发，并用按站点结果隔离的 settled 结果汇总；余额批量命令的 rejection 必须在创建 promise 时转为 settled 结果，不能等模型请求结束后才接住。
+- Rust 余额缓存完成后通过 `sites-refresh-finished` 事件通知悬浮窗；悬浮窗只重新读取 `get_all_sites_quota`，不依赖主窗口内存状态。悬浮窗手动刷新通过 `sites-refresh-requested` 请求主窗口统一入口。
+- `floatingWindow.autoRefreshMinutes` 仍是唯一刷新间隔；页面切换、KeepAlive、托盘隐藏和悬浮窗挂载都不得创建第二个 interval。
+
+错误状态不应只看余额 `status`：如果保留旧余额但 `quota.error` 非空，该站点本轮余额刷新仍算失败。
+
 ## 与后端一致性的陷阱
 
 前端字段名必须与 Rust 的 serde 命名**逐字对齐**（Rust 端统一

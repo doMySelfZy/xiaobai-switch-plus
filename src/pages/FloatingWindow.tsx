@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "@/lib/invoke";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@/lib/invoke";
+import { useSiteStore } from "@/stores";
 import type { AppSettings, SiteQuotaSummary } from "@/types/domain";
 import {
   ReloadOutlined,
@@ -117,12 +119,6 @@ function formatQuota(
   return t("settings.floatingWindowUnavailable");
 }
 
-/** 从设置里读需要的两个值。 */
-interface FloatingPrefs {
-  autoRefreshMinutes: number;
-  collapsed: boolean;
-}
-
 export const FloatingWindow: React.FC = () => {
   const { t } = useTranslation();
   const { token } = theme.useToken();
@@ -135,11 +131,11 @@ export const FloatingWindow: React.FC = () => {
    */
   const appWindow = useMemo(() => getCurrentWindow(), []);
   const { message } = App.useApp();
+  const refreshAllSites = useSiteStore((state) => state.refreshAllSites);
   const [sites, setSites] = useState<SiteQuotaSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [collapsed, setCollapsed] = useState(false);
-  const [prefs, setPrefs] = useState<FloatingPrefs | null>(null);
 
   /**
    * 拖动状态。
@@ -203,23 +199,37 @@ export const FloatingWindow: React.FC = () => {
     [persistPosition],
   );
 
-  /** 拉最新余额：后端并发探测所有站点并更新缓存，返回汇总。 */
-  const refreshQuotas = useCallback(
-    async (showSpinner = true) => {
-      try {
-        if (showSpinner) setLoading(true);
-        const data = await invoke<SiteQuotaSummary[]>("refresh_sites_quota");
-        setSites(data);
-        setLastUpdate(new Date());
-      } catch (error) {
-        console.error("Failed to refresh quotas:", error);
-        message.error(t("settings.floatingWindowFetchFailed"));
-      } finally {
-        setLoading(false);
+  /** 读取统一刷新任务写入的余额缓存。 */
+  const loadQuotaCache = useCallback(async () => {
+    try {
+      const data = await invoke<SiteQuotaSummary[]>("get_all_sites_quota");
+      setSites(data);
+      setLastUpdate(new Date());
+    } catch (error) {
+      console.error("Failed to load quota cache:", error);
+      message.error(t("settings.floatingWindowFetchFailed"));
+    } finally {
+      setLoading(false);
+    }
+  }, [message, t]);
+
+  /** 主窗口持有统一刷新任务，悬浮窗只请求它并读取后端缓存。 */
+  const requestUnifiedRefresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      if (isTauri()) {
+        const { emit } = await import("@tauri-apps/api/event");
+        await emit("sites-refresh-requested");
+      } else {
+        await refreshAllSites();
+        await loadQuotaCache();
       }
-    },
-    [message, t],
-  );
+    } catch (error) {
+      console.error("Failed to request unified refresh:", error);
+      message.error(t("settings.floatingWindowFetchFailed"));
+      setLoading(false);
+    }
+  }, [loadQuotaCache, message, refreshAllSites, t]);
 
   /** 展开/收起时同步窗口尺寸：收起是圆球，展开是面板。 */
   const applyCollapsed = useCallback(
@@ -237,20 +247,6 @@ export const FloatingWindow: React.FC = () => {
     [appWindow],
   );
 
-  /** 重读设置里的悬浮窗偏好。设置页改动后由事件触发。 */
-  const reloadPrefs = useCallback(async () => {
-    try {
-      const settings = await invoke<AppSettings>("get_settings");
-      const minutes = settings.floatingWindow?.autoRefreshMinutes ?? 5;
-      setPrefs({
-        autoRefreshMinutes: minutes,
-        collapsed: settings.floatingWindow?.collapsed ?? false,
-      });
-    } catch (error) {
-      console.error("Failed to reload floating window settings:", error);
-    }
-  }, []);
-
   // 首屏：先读缓存立刻出内容，再后台刷新一次。
   useEffect(() => {
     let cancelled = false;
@@ -263,15 +259,13 @@ export const FloatingWindow: React.FC = () => {
         if (cancelled) return;
         setSites(cached);
         if (cached.length > 0) setLastUpdate(new Date());
-        const minutes = settings.floatingWindow?.autoRefreshMinutes ?? 5;
         const isCollapsed = settings.floatingWindow?.collapsed ?? false;
-        setPrefs({ autoRefreshMinutes: minutes, collapsed: isCollapsed });
         setCollapsed(isCollapsed);
         await applyCollapsed(isCollapsed);
-        void refreshQuotas(false);
+        setLoading(false);
       } catch (error) {
         console.error("Failed to load floating window state:", error);
-        if (!cancelled) void refreshQuotas();
+        if (!cancelled) await loadQuotaCache();
       }
     })();
     return () => {
@@ -280,33 +274,24 @@ export const FloatingWindow: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 自动刷新：按设置里的分钟数定时拉取。组件卸载时清掉定时器。
+  // 统一刷新完成后读取后端余额缓存；定时器由主窗口 AppInner 唯一持有。
   useEffect(() => {
-    if (!prefs) return;
-    const intervalMs = Math.max(1, prefs.autoRefreshMinutes) * 60_000;
-    const timer = window.setInterval(() => {
-      void refreshQuotas(false);
-    }, intervalMs);
-    return () => window.clearInterval(timer);
-  }, [prefs, refreshQuotas]);
-
-  // 设置页改了刷新间隔：立刻跟随，不用重开窗口。
-  useEffect(() => {
+    if (!isTauri()) return;
     let unlisten: (() => void) | undefined;
     let disposed = false;
-    void listen("floating-settings-changed", () => {
-      void reloadPrefs();
+    void listen("sites-refresh-finished", () => {
+      void loadQuotaCache();
     })
       .then((fn) => {
         if (disposed) fn();
         else unlisten = fn;
       })
-      .catch((error) => console.error("Failed to listen for settings changes:", error));
+      .catch((error) => console.error("Failed to listen for site refresh:", error));
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, [reloadPrefs]);
+  }, [loadQuotaCache]);
 
   const persistCollapsed = useCallback(
     async (next: boolean) => {
@@ -516,7 +501,7 @@ export const FloatingWindow: React.FC = () => {
                   icon={<ReloadOutlined />}
                   onClick={(event) => {
                     event.stopPropagation();
-                    void refreshQuotas();
+                    void requestUnifiedRefresh();
                   }}
                   loading={loading}
                   style={{ color: token.colorTextTertiary }}

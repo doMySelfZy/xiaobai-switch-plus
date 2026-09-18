@@ -57,6 +57,7 @@ describe("siteStore fetchModels", () => {
       loading: false,
       hydrated: false,
       fetchingModels: false,
+      refreshingAll: false,
       fetchingModelsByKey: {},
       fetchingModelsBySite: {},
       error: null,
@@ -81,6 +82,59 @@ describe("siteStore fetchModels", () => {
     const ids = (useSiteStore.getState().modelsBySite[site.id] ?? []).map((m) => m.modelId);
     expect(ids).toContain("gpt-4.1");
     expect(ids).toContain("gpt-5.6-terra");
+  });
+
+  it("refreshes models and quota together for enabled sites and deduplicates callers", async () => {
+    const enabled = await useSiteStore.getState().createSite({
+      name: "Enabled Relay",
+      baseUrl: "https://enabled.example.com",
+      apiKey: fakeKey("enabled"),
+    });
+    const disabled = await useSiteStore.getState().createSite({
+      name: "Disabled Relay",
+      baseUrl: "https://disabled.example.com",
+      apiKey: fakeKey("disabled"),
+    });
+    await useSiteStore.getState().updateSite(disabled.id, { enabled: false });
+
+    const first = useSiteStore.getState().refreshAllSites();
+    const second = useSiteStore.getState().refreshAllSites();
+    expect(second).toBe(first);
+
+    const result = await first;
+    expect(result.successCount).toBe(1);
+    expect(result.failureCount).toBe(0);
+    expect(result.sites).toEqual([
+      expect.objectContaining({
+        siteId: enabled.id,
+        modelCount: 2,
+        modelsOk: true,
+        quotaOk: true,
+      }),
+    ]);
+    expect(useSiteStore.getState().modelsBySite[enabled.id]).toHaveLength(2);
+    expect(useSiteStore.getState().modelsBySite[disabled.id]).toBeUndefined();
+    expect(getBrowserQuotaProbeCallCount()).toBe(1);
+    expect(useSiteStore.getState().refreshingAll).toBe(false);
+  });
+
+  it("uses the captured active key when a site has multiple keys", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Keyed Relay",
+      baseUrl: "https://keyed.example.com",
+      apiKey: fakeKey("first"),
+    });
+    const updated = await useSiteStore.getState().addApiKey(site.id, {
+      apiKey: fakeKey("second"),
+    });
+    const activeKey = updated.activeApiKeyId;
+    expect(activeKey).toBeTruthy();
+
+    const result = await useSiteStore.getState().refreshAllSites();
+    expect(result.sites[0]?.modelsOk).toBe(true);
+    expect(
+      useSiteStore.getState().modelsBySite[site.id]?.every((model) => model.apiKeyId === activeKey),
+    ).toBe(true);
   });
 
   it("creates a site with extra api keys in one call", async () => {

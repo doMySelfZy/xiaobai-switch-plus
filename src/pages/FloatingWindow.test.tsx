@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { App as AntdApp, ConfigProvider } from "antd";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleBrowserCommand, resetBrowserMock } from "@/lib/browserMock";
+import { resetBrowserMock } from "@/lib/browserMock";
 import { FloatingWindow, withAlpha } from "./FloatingWindow";
 import "@/i18n";
 
@@ -262,10 +262,9 @@ describe("FloatingWindow", () => {
     });
   });
 
-  it("refreshes on the configured interval and stops after unmount", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const invoke = await invokeMock();
-    const { unmount } = render(
+  it("does not create a refresh interval because App owns the unified timer", async () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    render(
       <Wrapper>
         <FloatingWindow />
       </Wrapper>,
@@ -274,23 +273,8 @@ describe("FloatingWindow", () => {
     await waitFor(() => {
       expect(screen.getByText("Relay A")).toBeInTheDocument();
     });
-
-    const countRefreshes = () =>
-      invoke.mock.calls.filter((call) => call[0] === "refresh_sites_quota").length;
-    const before = countRefreshes();
-
-    // 默认 5 分钟；推进 5 分钟应当触发一次，推进不足不触发。
-    await vi.advanceTimersByTimeAsync(4 * 60_000);
-    expect(countRefreshes()).toBe(before);
-
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(countRefreshes()).toBeGreaterThan(before);
-
-    // 卸载后定时器必须清掉，否则窗口关掉还在后台请求。
-    const afterUnmount = countRefreshes();
-    unmount();
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(countRefreshes()).toBe(afterUnmount);
+    expect(setIntervalSpy.mock.calls.some(([, ms]) => ms !== 50)).toBe(false);
+    setIntervalSpy.mockRestore();
   });
 
   it("performs a manual refresh from the refresh button", async () => {
@@ -304,19 +288,17 @@ describe("FloatingWindow", () => {
     await waitFor(() => {
       expect(screen.getByText("Relay A")).toBeInTheDocument();
     });
-    const before = invoke.mock.calls.filter((c) => c[0] === "refresh_sites_quota").length;
-
-    fireEvent.click(screen.getByRole("button", { name: /刷\s*新/ }));
+    const refreshButton = screen.getByRole("button", { name: "刷新" });
+    fireEvent.click(refreshButton);
 
     await waitFor(() => {
-      const after = invoke.mock.calls.filter((c) => c[0] === "refresh_sites_quota").length;
-      expect(after).toBeGreaterThan(before);
+      expect(
+        invoke.mock.calls.some((call) => call[0] === "refresh_sites_quota"),
+      ).toBe(true);
     });
   });
 
-  it("follows a settings change without reopening the window", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const invoke = await invokeMock();
+  it("does not register the native refresh event bridge in browser mode", async () => {
     render(
       <Wrapper>
         <FloatingWindow />
@@ -326,30 +308,7 @@ describe("FloatingWindow", () => {
     await waitFor(() => {
       expect(screen.getByText("Relay A")).toBeInTheDocument();
     });
-    const countRefreshes = () =>
-      invoke.mock.calls.filter((call) => call[0] === "refresh_sites_quota").length;
-
-    // 设置页把间隔改成 1 分钟并广播事件。
-    await handleBrowserCommand("save_settings", {
-      partial: {
-        floatingWindow: {
-          enabled: true,
-          autoRefreshMinutes: 1,
-          positionX: 100,
-          positionY: 100,
-          collapsed: false,
-        },
-      },
-    });
-    const handler = listeners.get("floating-settings-changed");
-    expect(handler, "悬浮窗应当订阅设置变更事件").toBeTruthy();
-    handler?.();
-
-    // 等重读设置完成，再推进 1 分钟：应当已按新间隔触发刷新。
-    await vi.advanceTimersByTimeAsync(0);
-    const before = countRefreshes();
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(countRefreshes()).toBeGreaterThan(before);
+    expect(listeners.get("sites-refresh-finished")).toBeUndefined();
   });
 
   it("closes the window and turns the feature off", async () => {

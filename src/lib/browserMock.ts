@@ -397,7 +397,12 @@ function initialInstalledSkillSources(): Map<string, string> {
 }
 
 export function resetBrowserMock() {
-  settings = { ...DEFAULT_SETTINGS };
+  settings = {
+    ...DEFAULT_SETTINGS,
+    floatingWindow: DEFAULT_SETTINGS.floatingWindow
+      ? { ...DEFAULT_SETTINGS.floatingWindow }
+      : undefined,
+  };
   sites = [];
   siteProxyHeaders = new Map();
   proxyRuntime = null;
@@ -624,7 +629,13 @@ export async function handleBrowserCommand<T>(
       return settings as T;
     case "save_settings": {
       const partial = (args?.partial ?? {}) as Partial<AppSettings>;
-      settings = { ...settings, ...partial };
+      settings = {
+        ...settings,
+        ...partial,
+        floatingWindow: partial.floatingWindow
+          ? { ...settings.floatingWindow, ...partial.floatingWindow }
+          : settings.floatingWindow,
+      };
       if (!settings.closeToTray) settings.startInTray = false;
       return settings as T;
     }
@@ -1444,7 +1455,151 @@ export async function handleBrowserCommand<T>(
     }
     // 悬浮窗：浏览器模式返回样例余额，覆盖「正常 / 低余额 / 无限额 / 未知」四种展示。
     case "get_all_sites_quota":
+      if (sites.length > 0) {
+        return sites
+          .filter((site) => site.enabled)
+          .map((site, index) => ({
+            siteId: site.id,
+            siteName: site.name,
+            enabled: true,
+            sortOrder: site.sortOrder ?? index,
+            quota: {
+              status: "available",
+              remainingUsd: 42.5,
+              usedUsd: 7.5,
+              totalUsd: 50,
+              unlimited: false,
+              unit: "USD",
+              expiresAt: null,
+              source: "token_usage",
+              endpoint: `${site.baseUrl}/v1/usage`,
+              fetchedAt: now(),
+              latencyMs: 12,
+              error: null,
+              windows: [],
+            },
+          })) as T;
+      }
+      return [
+        {
+          siteId: "s1",
+          siteName: "Relay A",
+          enabled: true,
+          sortOrder: 0,
+          quota: {
+            status: "available",
+            remainingUsd: 42.5,
+            usedUsd: 7.5,
+            totalUsd: 50,
+            unlimited: false,
+            unit: "usd",
+            expiresAt: null,
+            source: "token_usage",
+            endpoint: null,
+            fetchedAt: 1,
+            latencyMs: 12,
+            error: null,
+            windows: [],
+          },
+        },
+        {
+          siteId: "s2",
+          siteName: "Relay B",
+          enabled: true,
+          sortOrder: 1,
+          quota: {
+            status: "available",
+            remainingUsd: 1.25,
+            usedUsd: 8.75,
+            totalUsd: 10,
+            unlimited: false,
+            unit: "usd",
+            expiresAt: null,
+            source: "token_usage",
+            endpoint: null,
+            fetchedAt: 1,
+            latencyMs: 12,
+            error: null,
+            windows: [],
+          },
+        },
+        {
+          siteId: "s3",
+          siteName: "Unlimited C",
+          enabled: true,
+          sortOrder: 2,
+          quota: {
+            status: "available",
+            remainingUsd: null,
+            usedUsd: null,
+            totalUsd: null,
+            unlimited: true,
+            unit: null,
+            expiresAt: null,
+            source: null,
+            endpoint: null,
+            fetchedAt: 1,
+            latencyMs: 12,
+            error: null,
+            windows: [],
+          },
+        },
+        {
+          siteId: "s4",
+          siteName: "Unknown D",
+          enabled: false,
+          sortOrder: 3,
+          quota: null,
+        },
+        {
+          siteId: "s5",
+          siteName: "Failed E",
+          enabled: true,
+          sortOrder: 4,
+          quota: {
+            status: "error",
+            remainingUsd: null,
+            usedUsd: null,
+            totalUsd: null,
+            unlimited: false,
+            unit: null,
+            expiresAt: null,
+            source: null,
+            endpoint: null,
+            fetchedAt: 1,
+            latencyMs: 0,
+            error: "unauthorized: invalid api key",
+            windows: [],
+          },
+        },
+      ] as T;
     case "refresh_sites_quota":
+      quotaProbeCallCount += 1;
+      if (sites.length > 0) {
+        return sites
+          .filter((site) => site.enabled)
+          .map((site, index) => ({
+            siteId: site.id,
+            siteName: site.name,
+            enabled: true,
+            sortOrder: site.sortOrder ?? index,
+            quota: {
+              status: "available",
+              remainingUsd: 42.5,
+              usedUsd: 7.5,
+              totalUsd: 50,
+              unlimited: false,
+              unit: "USD",
+              expiresAt: null,
+              source: "token_usage",
+              endpoint: `${site.baseUrl}/v1/usage`,
+              fetchedAt: now(),
+              latencyMs: 12,
+              error: null,
+              windows: [],
+            },
+          })) as T;
+      }
       return [
         {
           siteId: "s1",

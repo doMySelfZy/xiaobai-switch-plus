@@ -2,7 +2,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Button, Dropdown, Switch, Tooltip, theme } from "antd";
 import type { MenuProps } from "antd";
-import { Ellipsis, GripVertical, Pencil, Trash2 } from "lucide-react";
+import { Ellipsis, GripVertical, Loader2, Pencil, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ReactNode } from "react";
 import type { Site } from "@/types/domain";
@@ -43,6 +43,10 @@ export function SiteListItem({
   // 摘要只基于最近一次成功探测（quotaBySite）；失败/加载态交给右侧详情展示。
   const quota = useSiteStore((s) => s.quotaBySite[site.id]);
   const modelsBySite = useSiteStore((s) => s.modelsBySite);
+  const refreshingSiteIds = useSiteStore((s) => s.refreshingSiteIds);
+  const fetchingModelsBySite = useSiteStore((s) => s.fetchingModelsBySite);
+  // 站点正在刷新 = 全局刷新中包含该站点 或 单独刷新该站点的模型
+  const isRefreshing = refreshingSiteIds.includes(site.id) || Boolean(fetchingModelsBySite[site.id]);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: site.id,
   });
@@ -266,6 +270,14 @@ export function SiteListItem({
                   title={statusTitle}
                 />
                 <div className="truncate text-sm font-medium">{site.name}</div>
+                {isRefreshing && (
+                  <Loader2
+                    size={14}
+                    className="shrink-0 animate-spin"
+                    style={{ color: token.colorTextTertiary }}
+                    data-testid="site-refreshing-indicator"
+                  />
+                )}
               </div>
               {/* 第二行固定高度：站点没有额度摘要时也占位，列表行高保持整齐 */}
               <div className="min-h-5 min-w-0">{quotaSummary}</div>

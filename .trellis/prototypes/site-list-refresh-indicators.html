@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>站点列表刷新指示器原型</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 24px;
+      color: rgba(0, 0, 0, 0.88);
+    }
+
+    .container {
+      max-width: 560px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+      overflow: hidden;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(5, 5, 5, 0.06);
+    }
+
+    .header-title {
+      font-size: 16px;
+      font-weight: 500;
+      color: rgba(0, 0, 0, 0.88);
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      border: 1px solid rgba(5, 5, 5, 0.06);
+      background: #fff;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+      border-color: #1677ff;
+      color: #1677ff;
+    }
+
+    .icon-btn.refreshing {
+      color: #1677ff;
+      pointer-events: none;
+    }
+
+    .icon-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .global-refresh-btn.refreshing svg {
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+
+    .site-list {
+      padding: 8px 0;
+    }
+
+    .site-item {
+      display: flex;
+      align-items: center;
+      padding: 12px 20px;
+      gap: 12px;
+      transition: background 0.2s;
+      position: relative;
+    }
+
+    .site-item:hover {
+      background: rgba(0, 0, 0, 0.02);
+    }
+
+    .drag-handle {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      color: rgba(0, 0, 0, 0.25);
+    }
+
+    .drag-handle svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .site-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      font-weight: 500;
+      color: #fff;
+      flex-shrink: 0;
+    }
+
+    .site-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .site-name {
+      font-size: 14px;
+      font-weight: 500;
+      color: rgba(0, 0, 0, 0.88);
+      margin-bottom: 2px;
+    }
+
+    .site-quota {
+      font-size: 13px;
+      color: rgba(0, 0, 0, 0.45);
+    }
+
+    .site-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+      display: inline-block;
+    }
+
+    .site-status.online {
+      background: #52c41a;
+    }
+
+    .site-status.offline {
+      background: #ff4d4f;
+    }
+
+    .site-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .refresh-indicator {
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #1677ff;
+      opacity: 0;
+      transform: scale(0.8);
+      transition: opacity 0.2s, transform 0.2s;
+    }
+
+    .refresh-indicator.active {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    .refresh-indicator svg {
+      width: 16px;
+      height: 16px;
+      animation: spin 1s linear infinite;
+    }
+
+    .site-switch {
+      width: 44px;
+      height: 22px;
+      border-radius: 100px;
+      background: rgba(0, 0, 0, 0.25);
+      position: relative;
+      cursor: pointer;
+      transition: background 0.2s;
+      flex-shrink: 0;
+    }
+
+    .site-switch.checked {
+      background: #1677ff;
+    }
+
+    .site-switch::after {
+      content: '';
+      position: absolute;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      top: 2px;
+      left: 2px;
+      transition: transform 0.2s;
+      box-shadow: 0 2px 4px 0 rgba(0, 35, 11, 0.2);
+    }
+
+    .site-switch.checked::after {
+      transform: translateX(22px);
+    }
+
+    .controls {
+      margin-top: 24px;
+      padding: 16px;
+      background: #fafafa;
+      border-radius: 8px;
+    }
+
+    .controls h3 {
+      font-size: 14px;
+      margin-bottom: 12px;
+      color: rgba(0, 0, 0, 0.88);
+    }
+
+    .control-btn {
+      padding: 6px 16px;
+      border-radius: 6px;
+      border: 1px solid #d9d9d9;
+      background: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      margin-right: 8px;
+    }
+
+    .control-btn:hover {
+      border-color: #1677ff;
+      color: #1677ff;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 12px;
+      background: #e6f4ff;
+      border: 1px solid #91caff;
+      border-radius: 6px;
+      font-size: 13px;
+      color: #0958d9;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="header-title">上游站点</div>
+      <div class="header-actions">
+        <div class="icon-btn global-refresh-btn" id="globalRefreshBtn" title="全局刷新">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+          </svg>
+        </div>
+        <div class="icon-btn" title="添加站点">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div class="site-list" id="siteList">
+      <!-- Sites will be rendered here -->
+    </div>
+  </div>
+
+  <div class="controls">
+    <h3>原型控制</h3>
+    <button class="control-btn" onclick="simulateGlobalRefresh()">触发全局刷新</button>
+    <button class="control-btn" onclick="simulateSingleRefresh()">刷新单个站点（第一个）</button>
+    <div class="status" id="status">点击"触发全局刷新"查看效果</div>
+  </div>
+
+  <script>
+    const sites = [
+      { id: 'shuai', name: 'SHUAI API', quota: '剩余 ¥10.77', status: 'online', avatar: '🐑', color: '#52c41a' },
+      { id: 'aihub', name: 'AiHub', quota: '剩余 $4.28', status: 'online', avatar: 'A', color: '#1677ff' },
+      { id: 'justwoker', name: 'JustWoker', quota: '', status: 'offline', avatar: '◐', color: '#ff4d4f' },
+      { id: 'agentrouter', name: 'AgentRouter', quota: '剩余 $77.62', status: 'offline', avatar: '◐', color: '#ff4d4f' },
+      { id: 'opencode', name: 'OpenCode', quota: '5h 100% 周 39% 月 16%', status: 'offline', avatar: '◼', color: '#ff4d4f' },
+      { id: 'ultrarouter', name: 'UltraRouter', quota: '剩余 $145.00', status: 'online', avatar: '◐', color: '#52c41a' },
+      { id: 'modelscope', name: 'ModelScope', quota: '', status: 'online', avatar: 'M', color: '#52c41a' }
+    ];
+
+    let refreshingSet = new Set();
+
+    function renderSites() {
+      const list = document.getElementById('siteList');
+      list.innerHTML = sites.map(site => `
+        <div class="site-item" data-id="${site.id}">
+          <div class="drag-handle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="9" cy="7" r="1"></circle>
+              <circle cx="9" cy="12" r="1"></circle>
+              <circle cx="9" cy="17" r="1"></circle>
+              <circle cx="15" cy="7" r="1"></circle>
+              <circle cx="15" cy="12" r="1"></circle>
+              <circle cx="15" cy="17" r="1"></circle>
+            </svg>
+          </div>
+          <div class="site-avatar" style="background: ${site.color}">${site.avatar}</div>
+          <div class="site-info">
+            <div class="site-name">
+              <span class="site-status ${site.status}"></span>
+              ${site.name}
+            </div>
+            ${site.quota ? `<div class="site-quota">${site.quota}</div>` : ''}
+          </div>
+          <div class="site-actions">
+            <div class="refresh-indicator" data-site="${site.id}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+              </svg>
+            </div>
+            <div class="site-switch ${site.status === 'online' ? 'checked' : ''}"></div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function showRefreshIndicator(siteId) {
+      const indicator = document.querySelector(`.refresh-indicator[data-site="${siteId}"]`);
+      if (indicator) {
+        indicator.classList.add('active');
+        refreshingSet.add(siteId);
+      }
+    }
+
+    function hideRefreshIndicator(siteId) {
+      const indicator = document.querySelector(`.refresh-indicator[data-site="${siteId}"]`);
+      if (indicator) {
+        indicator.classList.remove('active');
+        refreshingSet.delete(siteId);
+      }
+      checkGlobalRefreshComplete();
+    }
+
+    function checkGlobalRefreshComplete() {
+      const btn = document.getElementById('globalRefreshBtn');
+      if (refreshingSet.size === 0) {
+        btn.classList.remove('refreshing');
+        updateStatus('全局刷新完成');
+      }
+    }
+
+    function updateStatus(text) {
+      document.getElementById('status').textContent = text;
+    }
+
+    function simulateGlobalRefresh() {
+      const btn = document.getElementById('globalRefreshBtn');
+      btn.classList.add('refreshing');
+      refreshingSet.clear();
+      
+      updateStatus('全局刷新进行中...');
+
+      // 模拟所有站点开始刷新
+      sites.forEach((site, index) => {
+        showRefreshIndicator(site.id);
+        
+        // 模拟不同站点刷新完成时间（1-4秒）
+        const delay = 1000 + Math.random() * 3000;
+        setTimeout(() => {
+          hideRefreshIndicator(site.id);
+          updateStatus(`${site.name} 刷新完成 (剩余 ${refreshingSet.size} 个)`);
+        }, delay);
+      });
+    }
+
+    function simulateSingleRefresh() {
+      const firstSite = sites[0];
+      showRefreshIndicator(firstSite.id);
+      updateStatus(`正在刷新 ${firstSite.name}...`);
+      
+      setTimeout(() => {
+        hideRefreshIndicator(firstSite.id);
+        updateStatus(`${firstSite.name} 刷新完成`);
+      }, 2000);
+    }
+
+    // Initial render
+    renderSites();
+
+    // Add click handler for global refresh button
+    document.getElementById('globalRefreshBtn').addEventListener('click', function() {
+      if (!this.classList.contains('refreshing')) {
+        simulateGlobalRefresh();
+      }
+    });
+  </script>
+</body>
+</html>

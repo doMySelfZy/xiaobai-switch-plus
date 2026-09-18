@@ -18,6 +18,7 @@ import { useSiteDeepLink } from "@/hooks/useSiteDeepLink";
 import { useTrayEvents } from "@/hooks/useTrayEvents";
 import { useAutoCheckUpdate } from "@/hooks/useUpdateChecker";
 import { invoke, isTauri } from "@/lib/invoke";
+import { useSiteStore } from "@/stores";
 import type { RestoreStartupResult } from "@/types/domain";
 import "./i18n";
 
@@ -141,6 +142,10 @@ function AppInner({ isDark }: { isDark: boolean }) {
   const activePage = useUIStore((s) => s.activePage);
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
+  const autoRefreshMinutes = useSettingsStore(
+    (s) => s.settings.floatingWindow?.autoRefreshMinutes ?? 5,
+  );
+  const refreshAllSites = useSiteStore((s) => s.refreshAllSites);
   const rootRef = useRef<HTMLDivElement>(null);
   const restoreResultReadRef = useRef(false);
   useSiteDeepLink({ modal, message });
@@ -156,6 +161,33 @@ function AppInner({ isDark }: { isDark: boolean }) {
         if (isTauri() && !startInTray) void showWindow();
       });
   }, [fetchSettings, i18n]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const intervalMs = Math.max(1, autoRefreshMinutes) * 60_000;
+    void refreshAllSites().catch(() => undefined);
+    const timer = window.setInterval(() => {
+      void refreshAllSites().catch(() => undefined);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshMinutes, refreshAllSites, settingsLoaded]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("sites-refresh-requested", () => refreshAllSites()))
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refreshAllSites]);
 
   useEffect(() => {
     if (!settingsLoaded || restoreResultReadRef.current) return;

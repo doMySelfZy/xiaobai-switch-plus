@@ -212,6 +212,21 @@ export interface FetchModelsResult {
   apiKeyId?: string;
 }
 
+export interface RefreshSiteResult {
+  siteId: string;
+  modelCount: number;
+  modelsOk: boolean;
+  quotaOk: boolean;
+  modelError: string | null;
+  quotaError: string | null;
+}
+
+export interface RefreshAllSitesResult {
+  sites: RefreshSiteResult[];
+  successCount: number;
+  failureCount: number;
+}
+
 export interface ProbeSiteApiKeyResult {
   modelCount: number;
   latencyMs: number;
