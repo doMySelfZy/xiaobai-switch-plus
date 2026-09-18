@@ -1,4 +1,5 @@
-import { Input, Typography, theme } from "antd";
+import { Button, Input, Typography, theme } from "antd";
+import { Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ProxyHeader } from "@/types/proxy";
 
@@ -61,10 +62,19 @@ export function parseProxyHeadersJson(raw: string): ParsedProxyHeaders {
     }));
   }
 
+  return validateProxyHeaders(items);
+}
+
+/**
+ * 校验结构化请求头行。空数组表示"不配置"，返回空数组而不是错误。
+ * 规则与后端同：非法名/值、受保护头、大小写归一后重名都在这里拦下，
+ * 避免保存成功却在转发时被静默丢弃。
+ */
+export function validateProxyHeaders(items: ProxyHeader[]): ParsedProxyHeaders {
   const seen = new Set<string>();
   const headers: ProxyHeader[] = [];
   for (const item of items) {
-    if (!item || typeof item !== "object" || typeof item.name !== "string") {
+    if (!item || typeof item.name !== "string") {
       return { error: "each entry needs a string `name`" };
     }
     const name = item.name.trim();
@@ -91,13 +101,13 @@ export function parseProxyHeadersJson(raw: string): ParsedProxyHeaders {
 }
 
 interface Props {
-  value: string;
-  onChange: (next: string) => void;
+  value: ProxyHeader[];
+  onChange: (next: ProxyHeader[]) => void;
   error: string | null;
 }
 
 /**
- * 站点级代理请求头编辑器。
+ * 站点级代理请求头编辑器（键值对行）。
  *
  * 只影响走本地代理的流量；占位符在转发时替换，不落库。
  */
@@ -105,21 +115,47 @@ export function ProxyHeaderEditor({ value, onChange, error }: Props) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
 
+  const update = (idx: number, patch: Partial<ProxyHeader>) =>
+    onChange(value.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
+  const remove = (idx: number) => onChange(value.filter((_, i) => i !== idx));
+  const add = () => onChange([...value, { name: "", value: "", enabled: true }]);
+
   return (
-    <div className="mt-3">
+    <div className="mt-2">
       <div className="mb-1 text-sm">{t("sites.proxyHeaders")}</div>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         {t("sites.proxyHeadersHint")}
       </Typography.Text>
-      <Input.TextArea
-        className="mt-2"
-        rows={5}
-        allowClear
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={'{\n  "x-opencode-session": "${SESSION}"\n}'}
-        status={error ? "error" : undefined}
-      />
+      <div className="mt-2 flex flex-col gap-2">
+        {value.map((row, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            <Input
+              value={row.name}
+              onChange={(e) => update(idx, { name: e.target.value })}
+              placeholder={t("sites.proxyHeaderName")}
+              className="min-w-0 basis-2/5"
+            />
+            <Input
+              value={row.value}
+              onChange={(e) => update(idx, { value: e.target.value })}
+              placeholder={t("sites.proxyHeaderValue")}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              type="text"
+              size="small"
+              icon={<Trash2 size={14} />}
+              onClick={() => remove(idx)}
+              aria-label={t("sites.removeProxyHeader")}
+            />
+          </div>
+        ))}
+        <div>
+          <Button type="link" size="small" icon={<Plus size={14} />} onClick={add}>
+            {t("sites.addProxyHeader")}
+          </Button>
+        </div>
+      </div>
       {error ? (
         <div style={{ color: token.colorError, fontSize: 12, marginTop: 4 }}>{error}</div>
       ) : (

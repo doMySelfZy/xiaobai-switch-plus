@@ -238,7 +238,12 @@
     "newapiTestFailed": "查询失败：{{detail}}",
     "newapiTestMissingCredentials": "请先填写访问令牌和用户 ID",
     "newapiTestMissingBaseUrl": "请先填写服务器地址",
-    "proxyHeaders": "请求头配置（JSON）",
+    "proxyHeaders": "本地代理请求头",
+    "enableProxyHeaders": "启用自定义请求头",
+    "addProxyHeader": "添加请求头",
+    "removeProxyHeader": "删除请求头",
+    "proxyHeaderName": "名称",
+    "proxyHeaderValue": "值",
     "proxyHeadersHint": "仅当在设置中启用本地代理时，这些请求头才会生效。客户端原有的请求头会保留，这里的配置会新增或覆盖同名项。",
     "proxyHeadersPlaceholders": "支持占位符：${API_KEY}（站点当前密钥）、${SESSION}（按站点稳定，适合会话亲和）、${UUID}（每请求新生成）。",
     "proxyHeadersInvalid": "请求头格式错误：{{detail}}"

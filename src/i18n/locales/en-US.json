@@ -238,7 +238,12 @@
     "newapiTestFailed": "Check failed: {{detail}}",
     "newapiTestMissingCredentials": "Fill in the access token and user ID first",
     "newapiTestMissingBaseUrl": "Fill in the base URL first",
-    "proxyHeaders": "Header config (JSON)",
+    "proxyHeaders": "Local proxy headers",
+    "enableProxyHeaders": "Enable custom headers",
+    "addProxyHeader": "Add header",
+    "removeProxyHeader": "Remove header",
+    "proxyHeaderName": "Name",
+    "proxyHeaderValue": "Value",
     "proxyHeadersHint": "These headers only apply when the local proxy is enabled in settings. Client headers are preserved by default; entries here add or override matching keys.",
     "proxyHeadersPlaceholders": "Placeholders: ${API_KEY} (site's active key), ${SESSION} (stable per site, good for session affinity), ${UUID} (new per request).",
     "proxyHeadersInvalid": "Invalid proxy headers: {{detail}}"

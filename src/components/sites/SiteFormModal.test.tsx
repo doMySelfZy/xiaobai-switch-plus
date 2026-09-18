@@ -339,6 +339,19 @@ describe("SiteFormModal base url list", () => {
     expect(screen.queryByText("识图支持")).not.toBeInTheDocument();
   });
 
+  it("reveals the header editor only after enabling custom headers", () => {
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+
+    fireEvent.click(screen.getByText("可选配置"));
+    expect(screen.queryByText("添加请求头")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("启用自定义请求头"));
+    expect(screen.getByText("添加请求头")).toBeInTheDocument();
+  });
+
   it("expands optional settings when notes are set", () => {
     render(
       <Wrapper>

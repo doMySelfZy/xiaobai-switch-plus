@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Collapse, Form, Input, Modal, Select, Typography, theme } from "antd";
+import { App, Button, Checkbox, Collapse, Form, Input, Modal, Select, Typography, theme } from "antd";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { NewApiAccessProbe, ProtocolDetectionResult, Site, SiteCapabilities, SiteProtocol } from "@/types/domain";
@@ -21,7 +21,7 @@ import {
   type CodexCapabilityFlags,
 } from "@/lib/siteCapabilities";
 import { CodexCapabilitySwitchList } from "@/components/apply/CodexCapabilitySwitchList";
-import { ProxyHeaderEditor, parseProxyHeadersJson } from "./ProxyHeaderEditor";
+import { ProxyHeaderEditor, validateProxyHeaders } from "./ProxyHeaderEditor";
 import type { ProxyHeader } from "@/types/proxy";
 
 function toActiveKeys(keys: string | string[]): string[] {
@@ -131,7 +131,8 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
   const [capOpen, setCapOpen] = useState<string[]>([]);
   const [newapiTokenLoadFailed, setNewapiTokenLoadFailed] = useState(false);
   const [newapiTesting, setNewapiTesting] = useState(false);
-  const [proxyHeadersJson, setProxyHeadersJson] = useState("");
+  const [proxyHeaders, setProxyHeaders] = useState<ProxyHeader[]>([]);
+  const [enabledProxyHeaders, setEnabledProxyHeaders] = useState(false);
   const [proxyHeadersError, setProxyHeadersError] = useState<string | null>(null);
   const [protocolTesting, setProtocolTesting] = useState(false);
   const [protocolTestResult, setProtocolTestResult] = useState<{
@@ -186,11 +187,15 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
       void invoke<ProxyHeader[]>("get_site_proxy_headers", { siteId: site.id })
         .then((headers) => {
           if (!cancelled) {
-            setProxyHeadersJson(headers.length ? JSON.stringify(headers, null, 2) : "");
+            setProxyHeaders(headers);
+            setEnabledProxyHeaders(headers.length > 0);
           }
         })
         .catch(() => {
-          if (!cancelled) setProxyHeadersJson("");
+          if (!cancelled) {
+            setProxyHeaders([]);
+            setEnabledProxyHeaders(false);
+          }
         });
       form.setFieldsValue({
         name: site.name,
@@ -245,7 +250,8 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         newapiAccessToken: "",
         newapiUserId: "",
       });
-      setProxyHeadersJson("");
+      setProxyHeaders([]);
+      setEnabledProxyHeaders(false);
       setProxyHeadersError(null);
     }
     return () => {
@@ -407,11 +413,15 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         message.error(t("sites.apiKey"));
         return;
       }
-      const parsedHeaders = parseProxyHeadersJson(proxyHeadersJson);
-      if (parsedHeaders.error) {
-        setProxyHeadersError(parsedHeaders.error);
-        message.error(t("sites.proxyHeadersInvalid", { detail: parsedHeaders.error }));
-        return;
+      let finalHeaders: ProxyHeader[] = [];
+      if (enabledProxyHeaders) {
+        const validated = validateProxyHeaders(proxyHeaders);
+        if (validated.error) {
+          setProxyHeadersError(validated.error);
+          message.error(t("sites.proxyHeadersInvalid", { detail: validated.error }));
+          return;
+        }
+        finalHeaders = validated.headers ?? [];
       }
       setProxyHeadersError(null);
       // 已配置令牌但解密回填失败时省略字段，避免把令牌意外清空。
@@ -433,7 +443,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
           capabilities,
           newapiAccessToken,
           newapiUserId: values.newapiUserId?.trim() || "",
-          proxyHeaders: parsedHeaders.headers ?? [],
+          proxyHeaders: finalHeaders,
         });
         invalidateSiteIconCache(site.id);
       } else {
@@ -452,7 +462,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
           capabilities,
           newapiAccessToken: values.newapiAccessToken?.trim() || null,
           newapiUserId: values.newapiUserId?.trim() || null,
-          proxyHeaders: parsedHeaders.headers ?? [],
+          proxyHeaders: finalHeaders,
         });
       }
       message.success(isCreate ? t("sites.createSuccess") : t("sites.updateSuccess"));
@@ -640,14 +650,29 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                         {t("sites.groupProxy")}
                       </Text>
                     </div>
-                    <ProxyHeaderEditor
-                      value={proxyHeadersJson}
-                      onChange={(next) => {
-                        setProxyHeadersJson(next);
+                    <Checkbox
+                      checked={enabledProxyHeaders}
+                      onChange={(e) => {
+                        const next = e.target.checked;
+                        setEnabledProxyHeaders(next);
+                        if (next && proxyHeaders.length === 0) {
+                          setProxyHeaders([{ name: "", value: "", enabled: true }]);
+                        }
                         if (proxyHeadersError) setProxyHeadersError(null);
                       }}
-                      error={proxyHeadersError}
-                    />
+                    >
+                      {t("sites.enableProxyHeaders")}
+                    </Checkbox>
+                    {enabledProxyHeaders && (
+                      <ProxyHeaderEditor
+                        value={proxyHeaders}
+                        onChange={(next) => {
+                          setProxyHeaders(next);
+                          if (proxyHeadersError) setProxyHeadersError(null);
+                        }}
+                        error={proxyHeadersError}
+                      />
+                    )}
                   </>
                 ),
               },
