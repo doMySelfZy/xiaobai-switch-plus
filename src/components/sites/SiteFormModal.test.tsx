@@ -38,9 +38,8 @@ function defaultInvokeImpl(cmd: string): Promise<unknown> {
   return Promise.reject({ code: "internal", message: `unexpected command: ${cmd}` });
 }
 
-/** 展开高级配置、填好必填项并点「测试连接」。 */
+/** 填好必填项并点「测试连接」（协议与测试按钮现在都在基础区，无需展开折叠）。 */
 function startProtocolTest() {
-  fireEvent.click(screen.getByText("高级配置"));
   fireEvent.change(screen.getByPlaceholderText("https://api.example.com"), {
     target: { value: "https://api.example.com" },
   });
@@ -311,35 +310,36 @@ describe("SiteFormModal base url list", () => {
     }
   });
 
-  it("keeps advanced config and Codex capabilities collapsed by default", () => {
+  it("keeps optional settings and Codex capabilities collapsed by default", () => {
     render(
       <Wrapper>
         <SiteFormModal open site={null} onClose={() => undefined} />
       </Wrapper>,
     );
 
-    expect(screen.getByText("高级配置")).toBeInTheDocument();
+    expect(screen.getByText("可选配置")).toBeInTheDocument();
     expect(screen.getByText("Codex私有能力")).toBeInTheDocument();
     expect(document.querySelector(".ant-collapse-item-active")).toBeNull();
-    expect(screen.queryByText("连接协议")).not.toBeInTheDocument();
+    // 协议与测试连接已移到基础区，默认即可见；备注/请求头仍在折叠内，默认收起。
+    expect(screen.getByText("连接协议")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试连接" })).toBeInTheDocument();
     expect(screen.queryByText("备注")).not.toBeInTheDocument();
     expect(screen.queryByText("识图支持")).not.toBeInTheDocument();
   });
 
-  it("reveals protocol and notes after expanding advanced config", () => {
+  it("reveals notes after expanding optional settings", () => {
     render(
       <Wrapper>
         <SiteFormModal open site={null} onClose={() => undefined} />
       </Wrapper>,
     );
 
-    fireEvent.click(screen.getByText("高级配置"));
-    expect(screen.getByText("连接协议")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("可选配置"));
     expect(screen.getByText("备注")).toBeInTheDocument();
     expect(screen.queryByText("识图支持")).not.toBeInTheDocument();
   });
 
-  it("expands advanced config when notes or a non-default protocol are set", () => {
+  it("expands optional settings when notes are set", () => {
     render(
       <Wrapper>
         <SiteFormModal
@@ -368,7 +368,8 @@ describe("SiteFormModal base url list", () => {
 
     expect(document.querySelector(".ant-collapse-item-active")).not.toBeNull();
     expect(screen.getByText("识图支持")).toBeInTheDocument();
-    expect(screen.queryByText("连接协议")).not.toBeInTheDocument();
+    // 该站点无备注/令牌/请求头，可选配置默认收起 → 备注不可见。
+    expect(screen.queryByText("备注")).not.toBeInTheDocument();
   });
 
   it("keeps the dialog inside the viewport when content grows", () => {

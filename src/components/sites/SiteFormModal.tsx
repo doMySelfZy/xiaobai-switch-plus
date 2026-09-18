@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Collapse, Divider, Form, Input, Modal, Select, Typography, theme } from "antd";
+import { App, Button, Collapse, Form, Input, Modal, Select, Typography, theme } from "antd";
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { NewApiAccessProbe, ProtocolDetectionResult, Site, SiteCapabilities, SiteProtocol } from "@/types/domain";
@@ -30,8 +30,9 @@ function toActiveKeys(keys: string | string[]): string[] {
 
 const { Text } = Typography;
 
-function shouldOpenAdvanced(protocol?: SiteProtocol | null, notes?: string | null) {
-  return protocol === "anthropic" || Boolean(notes?.trim());
+/** 备注是折叠内字段；有备注才默认展开「可选配置」。协议已移到基础区，不再触发展开。 */
+function shouldOpenAdvanced(notes?: string | null) {
+  return Boolean(notes?.trim());
 }
 
 /**
@@ -159,10 +160,9 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
     let cancelled = false;
     const caps = site?.capabilities ?? initialValues?.capabilities ?? {};
     const flags = codexFlagsFromCapabilities(caps);
-    const protocol = site?.protocol ?? initialValues?.protocol ?? "openai_compatible";
     const notes = site ? (site.notes ?? "") : (initialValues?.notes ?? "");
     setCodexFlags(flags);
-    setAdvancedOpen(shouldOpenAdvanced(protocol, notes) ? ["advanced"] : []);
+    setAdvancedOpen(shouldOpenAdvanced(notes) ? ["advanced"] : []);
     setCapOpen(anyCodexCapabilityOn(caps) ? ["codex"] : []);
     if (site) {
       const currentKeys = siteApiKeys(site);
@@ -174,7 +174,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
       setNewapiTokenLoadFailed(false);
       setNewapiTestResult(null);
       setAdvancedOpen(
-        shouldOpenAdvanced(protocol, notes) ||
+        shouldOpenAdvanced(notes) ||
           site.newapiConfigured ||
           (site.proxyHeaderCount ?? 0) > 0 ||
           forceAdvancedOpen
@@ -231,11 +231,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
       setKeyLoading(false);
       setNewapiTokenLoadFailed(false);
       setAdvancedOpen(
-        forceAdvancedOpen ||
-        shouldOpenAdvanced(
-          initialValues?.protocol ?? "openai_compatible",
-          initialValues?.notes ?? "",
-        )
+        forceAdvancedOpen || shouldOpenAdvanced(initialValues?.notes ?? "")
           ? ["advanced"]
           : [],
       );
@@ -516,6 +512,67 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         <Form.Item label={t("sites.apiKey")} extra={t("sites.apiKeyCreateHint")} required>
           <ApiKeyListInput disabled={keyLoading} />
         </Form.Item>
+        {/* 连接协议 + 测试连接：从折叠区提到基础区，新用户不展开也能自动检测。 */}
+        <Form.Item name="protocol" label={t("sites.protocol")} extra={t("sites.protocolHint")}>
+          <Select
+            options={[
+              { value: "openai_compatible", label: t("sites.protocolOpenai") },
+              { value: "anthropic", label: t("sites.protocolAnthropic") },
+            ]}
+          />
+        </Form.Item>
+        <div className="mt-[-12px] mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Button
+            size="small"
+            loading={protocolTesting}
+            onClick={() => void handleTestProtocol()}
+          >
+            {t("sites.testConnection")}
+          </Button>
+          {protocolTesting && (
+            <>
+              <ProtocolTestProgress />
+              <Button
+                size="small"
+                type="text"
+                icon={<X size={12} />}
+                aria-label={t("sites.protocolTestCancel")}
+                onClick={cancelProtocolTest}
+              >
+                {t("sites.protocolTestCancel")}
+              </Button>
+            </>
+          )}
+          {!protocolTesting && protocolTestResult && (
+            <Text
+              type={
+                protocolTestResult.ok
+                  ? "success"
+                  : protocolTestResult.cancelled
+                    ? "secondary"
+                    : "danger"
+              }
+              style={{ fontSize: 12 }}
+              role={protocolTestResult.ok ? undefined : "alert"}
+            >
+              {protocolTestResult.ok
+                ? t("sites.protocolDetected", {
+                    protocol: protocolTestResult.protocol === "openai_compatible"
+                      ? t("sites.protocolOpenai")
+                      : t("sites.protocolAnthropic"),
+                    count: protocolTestResult.modelCount,
+                  })
+                : protocolTestResult.cancelled
+                  ? t("sites.protocolTestCancelled")
+                  : t(
+                      PROTOCOL_TEST_FAILURE_KEYS[
+                        protocolTestResult.failureKind ?? "unknown"
+                      ],
+                      { detail: protocolTestResult.error ?? "" },
+                    )}
+            </Text>
+          )}
+        </div>
         <div className="flex flex-col gap-2">
           <Collapse
             size="small"
@@ -524,105 +581,40 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
             items={[
               {
                 key: "advanced",
-                label: t("sites.advanced"),
+                label: t("sites.optional"),
                 children: (
                   <>
-                    {/* 分三组并标注「可选」：高级区原本把 4 类不同人群才需要的字段平铺，
-                        普通用户看不出哪些能跳过。分组后每块都自带适用范围。 */}
-                    <Divider titlePlacement="start" style={{ marginTop: 0 }}>
-                      <span style={{ fontSize: 12, fontWeight: 400 }}>
-                        {t("sites.groupSiteInfo")}
-                      </span>
-                    </Divider>
-                    <Form.Item name="protocol" label={t("sites.protocol")} extra={t("sites.protocolHint")}>
-                      <Select
-                        options={[
-                          { value: "openai_compatible", label: t("sites.protocolOpenai") },
-                          { value: "anthropic", label: t("sites.protocolAnthropic") },
-                        ]}
-                      />
-                    </Form.Item>
-                    <div className="mt-[-12px] mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <Button
-                        size="small"
-                        loading={protocolTesting}
-                        onClick={() => void handleTestProtocol()}
-                      >
-                        {t("sites.testConnection")}
-                      </Button>
-                      {protocolTesting && (
-                        <>
-                          <ProtocolTestProgress />
-                          <Button
-                            size="small"
-                            type="text"
-                            icon={<X size={12} />}
-                            aria-label={t("sites.protocolTestCancel")}
-                            onClick={cancelProtocolTest}
-                          >
-                            {t("sites.protocolTestCancel")}
-                          </Button>
-                        </>
-                      )}
-                      {!protocolTesting && protocolTestResult && (
-                        <Text
-                          type={
-                            protocolTestResult.ok
-                              ? "success"
-                              : protocolTestResult.cancelled
-                                ? "secondary"
-                                : "danger"
-                          }
-                          style={{ fontSize: 12 }}
-                          role={protocolTestResult.ok ? undefined : "alert"}
-                        >
-                          {protocolTestResult.ok
-                            ? t("sites.protocolDetected", {
-                                protocol: protocolTestResult.protocol === "openai_compatible"
-                                  ? t("sites.protocolOpenai")
-                                  : t("sites.protocolAnthropic"),
-                                count: protocolTestResult.modelCount,
-                              })
-                            : protocolTestResult.cancelled
-                              ? t("sites.protocolTestCancelled")
-                              : t(
-                                  PROTOCOL_TEST_FAILURE_KEYS[
-                                    protocolTestResult.failureKind ?? "unknown"
-                                  ],
-                                  { detail: protocolTestResult.error ?? "" },
-                                )}                        </Text>
-                      )}
-                    </div>
                     <Form.Item name="notes" label={t("sites.notes")}>
                       <Input.TextArea rows={2} allowClear />
                     </Form.Item>
-                    <Divider titlePlacement="start">
-                      <span style={{ fontSize: 12, fontWeight: 400 }}>
+                    <div className="mb-2 mt-1">
+                      <Text strong style={{ fontSize: 13 }}>
                         {t("sites.groupQuota")}
-                      </span>
-                    </Divider>
-                    <Form.Item
-                      name="newapiAccessToken"
-                      label={t("sites.newapiAccessToken")}
-                      extra={
-                        site?.newapiConfigured && !newapiTokenLoadFailed
-                          ? t("sites.newapiTokenSavedHint")
-                          : t("sites.newapiTokenHint")
-                      }
-                    >
-                      <Input.Password autoComplete="new-password" placeholder="Access Token" />
-                    </Form.Item>
-                    <Form.Item
-                      name="newapiUserId"
-                      label={t("sites.newapiUserId")}
-                      className="!mb-0"
-                      extra={t("sites.newapiUserIdHint")}
-                    >
-                      <Input allowClear placeholder="1" inputMode="numeric" />
-                    </Form.Item>
-                    {/* 测试按钮紧跟它要用的字段——原先被下面的请求头编辑器隔开，
-                        看起来像两个无关的东西。 */}
-                    <div className="mt-3 flex items-center gap-3">
+                      </Text>
+                    </div>
+                    <div className="flex flex-wrap gap-x-3">
+                      <Form.Item
+                        name="newapiAccessToken"
+                        label={t("sites.newapiAccessToken")}
+                        className="min-w-[180px] flex-1"
+                        extra={
+                          site?.newapiConfigured && !newapiTokenLoadFailed
+                            ? t("sites.newapiTokenSavedHint")
+                            : t("sites.newapiTokenHint")
+                        }
+                      >
+                        <Input.Password autoComplete="new-password" placeholder="Access Token" />
+                      </Form.Item>
+                      <Form.Item
+                        name="newapiUserId"
+                        label={t("sites.newapiUserId")}
+                        className="min-w-[120px] flex-1"
+                        extra={t("sites.newapiUserIdHint")}
+                      >
+                        <Input allowClear placeholder="1" inputMode="numeric" />
+                      </Form.Item>
+                    </div>
+                    <div className="mt-[-8px] mb-3 flex items-center gap-3">
                       <Button
                         size="small"
                         loading={newapiTesting}
@@ -643,11 +635,11 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                         </Text>
                       )}
                     </div>
-                    <Divider titlePlacement="start" style={{ marginBottom: 12 }}>
-                      <span style={{ fontSize: 12, fontWeight: 400 }}>
+                    <div className="mb-2 mt-1">
+                      <Text strong style={{ fontSize: 13 }}>
                         {t("sites.groupProxy")}
-                      </span>
-                    </Divider>
+                      </Text>
+                    </div>
                     <ProxyHeaderEditor
                       value={proxyHeadersJson}
                       onChange={(next) => {
