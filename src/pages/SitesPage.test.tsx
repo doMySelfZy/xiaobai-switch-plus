@@ -741,7 +741,9 @@ describe("SitesPage", () => {
       ).toBe("unsupported");
     });
     expect(screen.getByTestId("site-quota-status")).toBeInTheDocument();
-    expect(screen.getByText("此站点不支持自动获取额度")).toBeInTheDocument();
+    // 完整句子只有详情面板一份；列表行第二行是摘要标签，不再同屏重复。
+    expect(screen.getByTestId("site-quota-status-placeholder")).toHaveTextContent("无额度接口");
+    expect(screen.getAllByText("此站点不支持自动获取额度")).toHaveLength(1);
   });
 
   it("uses the latest-attempt TTL when the window regains focus", async () => {

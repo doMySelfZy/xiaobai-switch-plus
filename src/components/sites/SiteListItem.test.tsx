@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBrowserMock } from "@/lib/browserMock";
 import { useSiteStore } from "@/stores";
 import { resetQuotaInflight } from "@/stores/siteStore";
-import type { QuotaWindow, Site, SiteQuota } from "@/types/domain";
+import type { QuotaProbeStatus, QuotaWindow, Site, SiteQuota } from "@/types/domain";
 import { SiteListItem } from "./SiteListItem";
 import "@/i18n";
 
@@ -85,6 +85,12 @@ function seedQuota(site: Site, value: SiteQuota) {
   });
 }
 
+function seedQuotaAttempt(site: Site, value: SiteQuota) {
+  act(() => {
+    useSiteStore.setState({ quotaAttemptBySite: { [site.id]: value } });
+  });
+}
+
 function renderListItem(site: Site, onSelect?: () => void) {
   return render(<Harness site={site} onSelect={onSelect} />);
 }
@@ -134,24 +140,74 @@ describe("SiteListItem quota summary", () => {
     resetBrowserMock();
   });
 
-  it("renders no summary before quota data or for unsupported / error / unlimited sites", async () => {
+  it("renders nothing on the second line before a quota probe has run", async () => {
     const site = await seedSite();
     renderListItem(site);
     // Flush the async SiteAvatar icon resolution so its setState stays in act.
     await act(async () => {});
 
-    // No quota data yet.
     expect(screen.queryByTestId("site-quota-summary")).toBeNull();
+    expect(screen.queryByTestId("site-quota-status-placeholder")).toBeNull();
+  });
 
-    // Unsupported / error / unlimited all stay quiet.
-    seedQuota(site, quota({ status: "unsupported" }));
+  it("says why the balance is missing when no probe ever succeeded", async () => {
+    const site = await seedSite();
+    seedQuotaAttempt(site, quota({ status: "unsupported" }));
+    renderListItem(site);
+
+    const placeholder = await screen.findByTestId("site-quota-status-placeholder");
+    expect(placeholder).toHaveTextContent("无额度接口");
     expect(screen.queryByTestId("site-quota-summary")).toBeNull();
+  });
 
-    seedQuota(site, quota({ status: "error", error: "boom" }));
-    expect(screen.queryByTestId("site-quota-summary")).toBeNull();
+  it("uses one short label per probe status", async () => {
+    const site = await seedSite();
+    const cases: Array<[QuotaProbeStatus, string]> = [
+      ["unsupported", "无额度接口"],
+      ["unauthorized", "鉴权失败"],
+      ["invalid_data", "数据异常"],
+      ["error", "获取失败"],
+    ];
 
+    for (const [status, label] of cases) {
+      seedQuotaAttempt(site, quota({ status, error: "boom" }));
+      const { unmount } = renderListItem(site);
+      const placeholder = await screen.findByTestId("site-quota-status-placeholder");
+      // 列表行只放摘要标签，完整句子归详情面板，避免同一屏出现两份副本。
+      expect(placeholder).toHaveTextContent(label);
+      expect(placeholder.textContent).toBe(label);
+      unmount();
+    }
+  });
+
+  it("renders no label for an unknown probe status", async () => {
+    const site = await seedSite();
+    seedQuotaAttempt(site, quota({ status: "unknown_status" as QuotaProbeStatus }));
+    renderListItem(site);
+    await act(async () => {});
+
+    expect(screen.queryByTestId("site-quota-status-placeholder")).toBeNull();
+  });
+
+  it("keeps the last successful balance when a later attempt failed", async () => {
+    const site = await seedSite();
+    seedQuota(site, quota({ remainingUsd: 12.34, usedUsd: 88.5, totalUsd: 100 }));
+    seedQuotaAttempt(site, quota({ status: "error", error: "boom" }));
+    renderListItem(site);
+
+    const summary = await screen.findByTestId("site-quota-summary");
+    expect(summary).toHaveTextContent("剩余 $12.34");
+    expect(screen.queryByTestId("site-quota-status-placeholder")).toBeNull();
+  });
+
+  it("stays quiet for an unlimited balance", async () => {
+    const site = await seedSite();
     seedQuota(site, quota({ unlimited: true, remainingUsd: null }));
+    renderListItem(site);
+    await act(async () => {});
+
     expect(screen.queryByTestId("site-quota-summary")).toBeNull();
+    expect(screen.queryByTestId("site-quota-status-placeholder")).toBeNull();
   });
 
   it("shows a neutral balance summary with amount and update time in the tooltip", async () => {

@@ -40,8 +40,10 @@ export function SiteListItem({
 }: Props) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
-  // 摘要只基于最近一次成功探测（quotaBySite）；失败/加载态交给右侧详情展示。
+  // 金额只认最近一次成功探测（quotaBySite）；没有成功记录时才用最近一次尝试
+  // （quotaAttemptBySite）说明「为什么没有余额」，否则第二行空白，看不出是没接口还是没连上。
   const quota = useSiteStore((s) => s.quotaBySite[site.id]);
+  const quotaAttempt = useSiteStore((s) => s.quotaAttemptBySite[site.id]);
   const modelsBySite = useSiteStore((s) => s.modelsBySite);
   const refreshingSiteIds = useSiteStore((s) => s.refreshingSiteIds);
   const fetchingModelsBySite = useSiteStore((s) => s.fetchingModelsBySite);
@@ -90,7 +92,7 @@ export function SiteListItem({
 
   // 列表额度摘要：余额型显示剩余金额，窗口型显示每个窗口的剩余百分比
   // （5 小时 / 周 / 月全列，窄容器用短标签）。两类都是「剩余」口径，颜色阈值
-  // 走同一个 quotaRemainingTone。不支持的站点安静不显示，避免一列表灰字。
+  // 走同一个 quotaRemainingTone。没有成功记录时显示最近一次尝试的原因，而不是留空。
   let quotaSummary: ReactNode = null;
   if (quota?.status === "available") {
     const windows = quota.windows ?? [];
@@ -189,23 +191,23 @@ export function SiteListItem({
         </Tooltip>
       );
     }
-  } else if (quota?.status) {
-    // 显示额度获取失败/不支持等状态的占位文字
-    const statusTextMap: Record<string, string> = {
-      unsupported: t("sites.quotaUnsupported"),
-      unauthorized: t("sites.quotaUnauthorized"),
-      invalid_data: t("sites.quotaInvalidData"),
-      error: t("sites.quotaError"),
+  } else if (quotaAttempt && quotaAttempt.status !== "available") {
+    // 列表行只放摘要标签；完整句子（含超时/上游 5xx 细分）归详情面板 SiteQuotaRow。
+    const statusLabelKeyMap: Record<string, string> = {
+      unsupported: "sites.quotaLabelUnsupported",
+      unauthorized: "sites.quotaLabelUnauthorized",
+      invalid_data: "sites.quotaLabelInvalidData",
+      error: "sites.quotaLabelError",
     };
-    const statusText = statusTextMap[quota.status];
-    if (statusText) {
+    const labelKey = statusLabelKeyMap[quotaAttempt.status];
+    if (labelKey) {
       quotaSummary = (
         <span
           className="block truncate text-xs"
           style={{ color: token.colorTextQuaternary }}
           data-testid="site-quota-status-placeholder"
         >
-          {statusText}
+          {t(labelKey)}
         </span>
       );
     }

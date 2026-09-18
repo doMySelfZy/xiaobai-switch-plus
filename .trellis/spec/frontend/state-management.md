@@ -46,8 +46,12 @@ saveServer: async (input) => {
 `useSiteStore.getState().refreshAllSites()`。站点页和悬浮窗不能各自创建周期任务：
 
 - `refreshAllSites()` 只筛选 `site.enabled === true` 的站点，刷新开始时捕获每站点 `activeApiKeyId`。
+- **一个站点的一轮刷新 = 模型 + 余额两件事**，两件事在同一个按站点 worker 里等齐。列表行的刷新指示器（`refreshingSiteIds`）跟着这一轮摘除：只等模型会让所有行先停止转圈、头部总按钮却还在转（曾经就是这样）。
 - 模型请求按 `(siteId, apiKeyId, baseUrl, quotaRevision)` 做 in-flight 去重；结果写回前必须验证请求版本、当前 Base URL 和 active key 仍一致。
-- 批量模型请求要限制并发，并用按站点结果隔离的 settled 结果汇总；余额批量命令的 rejection 必须在创建 promise 时转为 settled 结果，不能等模型请求结束后才接住。
+- 余额那一腿用逐站的 `refresh_site_quota`，**不是** `probe_site_quota`：前者探测完还写后端的悬浮窗余额缓存，后者只回给调用方——换成后者会让悬浮窗静默读到旧值。批量命令 `refresh_sites_quota` 已删除。
+- 按站点并发受限（4），单个站点的模型 / 余额任一失败都要转成该站点的 settled 结果并照常摘除指示器，不影响其它站点。
+- 余额分两份缓存：`quotaBySite` **只存** `status === "available"`（最近一次成功，金额口径），`quotaAttemptBySite` 存最近一次尝试（含失败）。列表行第二行按这个优先级取数：有成功金额显示金额，否则用尝试的 status 显示原因（`unsupported / unauthorized / invalid_data / error`），不留空白。全局刷新那一腿遇到命令 reject 时也要经 `errorQuotaAttempt()` 合成一条 error 尝试——只写成功结果会让连不上的站点永远空白。
+- 额度缺失原因的文案分两套，**不得合并**：列表行（232px、会被截断）用四字摘要 `sites.quotaLabel*`，详情面板用完整句子 `sites.quotaUnsupported` 等并保留超时 / 上游 5xx 细分。同一屏出现两份完整句子就是回归。
 - Rust 余额缓存完成后通过 `sites-refresh-finished` 事件通知悬浮窗；悬浮窗只重新读取 `get_all_sites_quota`，不依赖主窗口内存状态。悬浮窗手动刷新通过 `sites-refresh-requested` 请求主窗口统一入口。
 - `floatingWindow.autoRefreshMinutes` 仍是唯一刷新间隔；页面切换、KeepAlive、托盘隐藏和悬浮窗挂载都不得创建第二个 interval。
 
