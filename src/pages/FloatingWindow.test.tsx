@@ -277,8 +277,10 @@ describe("FloatingWindow", () => {
     setIntervalSpy.mockRestore();
   });
 
-  it("performs a manual refresh from the refresh button", async () => {
+  it("re-reads the balance cache after a manual refresh", async () => {
     const invoke = await invokeMock();
+    const cacheReads = () =>
+      invoke.mock.calls.filter((call) => call[0] === "get_all_sites_quota").length;
     render(
       <Wrapper>
         <FloatingWindow />
@@ -288,13 +290,13 @@ describe("FloatingWindow", () => {
     await waitFor(() => {
       expect(screen.getByText("Relay A")).toBeInTheDocument();
     });
+    const before = cacheReads();
     const refreshButton = screen.getByRole("button", { name: "刷新" });
     fireEvent.click(refreshButton);
 
+    // 浏览器模式没有主窗口持有统一刷新任务，悬浮窗自己跑一轮再回读缓存。
     await waitFor(() => {
-      expect(
-        invoke.mock.calls.some((call) => call[0] === "refresh_sites_quota"),
-      ).toBe(true);
+      expect(cacheReads()).toBeGreaterThan(before);
     });
   });
 

@@ -59,46 +59,38 @@ fn summarize(state: &AppState) -> AppResult<Vec<SiteQuotaSummary>> {
 
 /// 读各站点的余额汇总（只读缓存，不发网络请求）。
 ///
-/// 悬浮窗打开时先调这个立刻显示内容，再调 `refresh_sites_quota` 取最新值。
+/// 悬浮窗打开时先调这个立刻显示内容，最新值由主窗口的统一刷新逐站调
+/// `refresh_site_quota` 写进缓存。
 #[tauri::command]
 pub fn get_all_sites_quota(state: State<'_, AppState>) -> AppResult<Vec<SiteQuotaSummary>> {
     summarize(&state)
 }
 
-/// 并发探测所有站点的余额并更新缓存。
+/// 探测单个站点的余额并更新缓存。
 ///
-/// 串行探测在站点多时会让悬浮窗转很久，所以这里并发发请求；单个站点失败只跳过它
-/// （保留缓存里上一次的值），不影响其它站点。
+/// 统一刷新按站点调它，而不是批量刷新所有站点：列表行的刷新指示器要跟着「该站点的
+/// 模型 + 余额」这一轮走完，批量命令只能整体等最慢的那个站点，行上的圈会先停下来。
 #[tauri::command]
-pub async fn refresh_sites_quota(state: State<'_, AppState>) -> AppResult<Vec<SiteQuotaSummary>> {
-    let sites: Vec<_> = state
-        .db
-        .with_conn(repo::site::list_sites)?
-        .into_iter()
-        .filter(|site| site.enabled)
-        .collect();
-
-    let probes = sites
-        .iter()
-        .map(|site| crate::commands::quota::probe_quota_for(&state, &site.id));
-    let results = futures_util::future::join_all(probes).await;
-
-    for (site, result) in sites.iter().zip(results) {
-        match result {
-            Ok(quota) => store_quota(&site.id, quota),
-            Err(error) => {
-                // 失败时保留上一次的余额（显示旧数字比整片「不可用」有用），
-                // 同时把失败原因记进去——界面能据此说明为什么没刷新成功。
-                let mut quota = cached_quota(&site.id)
-                    .unwrap_or_else(crate::quota_probe::empty_key_result);
-                quota.error = Some(error.to_string());
-                store_quota(&site.id, quota);
-                tracing::warn!(site = %site.name, error = %error, "floating window quota probe failed");
-            }
+pub async fn refresh_site_quota(
+    state: State<'_, AppState>,
+    site_id: String,
+) -> AppResult<SiteQuota> {
+    match crate::commands::quota::probe_quota_for(&state, &site_id).await {
+        Ok(quota) => {
+            store_quota(&site_id, quota.clone());
+            Ok(quota)
+        }
+        Err(error) => {
+            // 失败时保留上一次的余额（显示旧数字比整片「不可用」有用），
+            // 同时把失败原因记进去——界面能据此说明为什么没刷新成功。
+            let mut quota = cached_quota(&site_id)
+                .unwrap_or_else(crate::quota_probe::empty_key_result);
+            quota.error = Some(error.to_string());
+            store_quota(&site_id, quota);
+            tracing::warn!(site_id = %site_id, error = %error, "site quota probe failed");
+            Err(error)
         }
     }
-
-    summarize(&state)
 }
 
 /// 切换悬浮窗显示/隐藏

@@ -451,6 +451,86 @@ export function setBrowserQuotaProbeHandler(
   quotaProbeHandler = handler;
 }
 
+/**
+ * 单站额度探测的 mock 口径。真实实现里 `probe_site_quota` 与 `refresh_site_quota`
+ * 走同一个探测函数，后者只多写一次悬浮窗缓存，所以两边共用这份形状。
+ */
+async function mockProbeQuota(site: Site): Promise<SiteQuota> {
+  if (quotaProbeHandler) return quotaProbeHandler(site);
+  if (isOpencodeGoBase(site.baseUrl)) {
+    const fetchedAt = now();
+    const base: SiteQuota = {
+      status: "available",
+      remainingUsd: null,
+      usedUsd: null,
+      totalUsd: null,
+      unlimited: false,
+      unit: "USD",
+      expiresAt: null,
+      source: "opencode_go",
+      endpoint: "https://opencode.ai/zen/go/v1/usage",
+      fetchedAt,
+      latencyMs: 9,
+      error: null,
+    };
+    if (!site.hasKey) {
+      return { ...base, status: "unauthorized", source: null, endpoint: null };
+    }
+    return {
+      ...base,
+      windows: [
+        {
+          kind: "rolling",
+          usagePercent: 12.5,
+          resetAt: fetchedAt + 2 * 3600_000,
+          limitUsd: 12,
+        },
+        {
+          kind: "weekly",
+          usagePercent: 46.2,
+          resetAt: fetchedAt + 3 * 24 * 3600_000,
+          limitUsd: 30,
+        },
+        {
+          kind: "monthly",
+          usagePercent: 8.4,
+          resetAt: fetchedAt + 20 * 24 * 3600_000,
+          limitUsd: 60,
+        },
+      ],
+    };
+  }
+  if (!site.hasKey || /no-quota/i.test(site.baseUrl) || /no-quota/i.test(site.name)) {
+    return {
+      status: "unsupported",
+      remainingUsd: null,
+      usedUsd: null,
+      totalUsd: null,
+      unlimited: false,
+      expiresAt: null,
+      source: null,
+      endpoint: null,
+      fetchedAt: now(),
+      latencyMs: 4,
+      error: null,
+    };
+  }
+  return {
+    status: "available",
+    remainingUsd: 87.5,
+    usedUsd: 12.5,
+    totalUsd: 100,
+    unlimited: false,
+    unit: "USD",
+    expiresAt: Math.floor(Date.UTC(2026, 11, 31) / 1000),
+    source: "credit_grants",
+    endpoint: `${normalizeBaseUrl(site.baseUrl).codexBaseUrl}/dashboard/billing/credit_grants`,
+    fetchedAt: now(),
+    latencyMs: 12,
+    error: null,
+  };
+}
+
 export function seedTargetStatuses(items: TargetLiveStatus[]) {
   targetStatuses = items;
 }
@@ -1573,127 +1653,13 @@ export async function handleBrowserCommand<T>(
           },
         },
       ] as T;
-    case "refresh_sites_quota":
+    case "refresh_site_quota": {
       quotaProbeCallCount += 1;
-      if (sites.length > 0) {
-        return sites
-          .filter((site) => site.enabled)
-          .map((site, index) => ({
-            siteId: site.id,
-            siteName: site.name,
-            enabled: true,
-            sortOrder: site.sortOrder ?? index,
-            quota: {
-              status: "available",
-              remainingUsd: 42.5,
-              usedUsd: 7.5,
-              totalUsd: 50,
-              unlimited: false,
-              unit: "USD",
-              expiresAt: null,
-              source: "token_usage",
-              endpoint: `${site.baseUrl}/v1/usage`,
-              fetchedAt: now(),
-              latencyMs: 12,
-              error: null,
-              windows: [],
-            },
-          })) as T;
-      }
-      return [
-        {
-          siteId: "s1",
-          siteName: "Relay A",
-          enabled: true,
-          sortOrder: 0,
-          quota: {
-            status: "available",
-            remainingUsd: 42.5,
-            usedUsd: 7.5,
-            totalUsd: 50,
-            unlimited: false,
-            unit: "usd",
-            expiresAt: null,
-            source: "token_usage",
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s2",
-          siteName: "Relay B",
-          enabled: true,
-          sortOrder: 1,
-          quota: {
-            status: "available",
-            remainingUsd: 1.25,
-            usedUsd: 8.75,
-            totalUsd: 10,
-            unlimited: false,
-            unit: "usd",
-            expiresAt: null,
-            source: "token_usage",
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s3",
-          siteName: "Unlimited C",
-          enabled: true,
-          sortOrder: 2,
-          quota: {
-            status: "available",
-            remainingUsd: null,
-            usedUsd: null,
-            totalUsd: null,
-            unlimited: true,
-            unit: null,
-            expiresAt: null,
-            source: null,
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s4",
-          siteName: "Unknown D",
-          enabled: false,
-          sortOrder: 3,
-          quota: null,
-        },
-        {
-          // 刷新失败的站点：界面应当在余额旁显示可查看的原因。
-          siteId: "s5",
-          siteName: "Failed E",
-          enabled: true,
-          sortOrder: 4,
-          quota: {
-            status: "error",
-            remainingUsd: null,
-            usedUsd: null,
-            totalUsd: null,
-            unlimited: false,
-            unit: null,
-            expiresAt: null,
-            source: null,
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 0,
-            error: "unauthorized: invalid api key",
-            windows: [],
-          },
-        },
-      ] as T;
+      const siteId = String(args?.siteId ?? "");
+      const site = sites.find((s) => s.id === siteId);
+      if (!site) throw { code: "not_found", message: "Site not found" };
+      return (await mockProbeQuota(site)) as T;
+    }
     case "set_floating_window_collapsed": {
       const collapsed = Boolean(args?.collapsed);
       settings = {
@@ -1805,88 +1771,7 @@ export async function handleBrowserCommand<T>(
       const siteId = String(args?.siteId ?? "");
       const site = sites.find((s) => s.id === siteId);
       if (!site) throw { code: "not_found", message: "Site not found" };
-      if (quotaProbeHandler) return (await quotaProbeHandler(site)) as T;
-      if (isOpencodeGoBase(site.baseUrl)) {
-        const fetchedAt = now();
-        const base: SiteQuota = {
-          status: "available",
-          remainingUsd: null,
-          usedUsd: null,
-          totalUsd: null,
-          unlimited: false,
-          unit: "USD",
-          expiresAt: null,
-          source: "opencode_go",
-          endpoint: "https://opencode.ai/zen/go/v1/usage",
-          fetchedAt,
-          latencyMs: 9,
-          error: null,
-        };
-        if (!site.hasKey) {
-          const unauthorized: SiteQuota = {
-            ...base,
-            status: "unauthorized",
-            source: null,
-            endpoint: null,
-          };
-          return unauthorized as T;
-        }
-        const result: SiteQuota = {
-          ...base,
-          windows: [
-            {
-              kind: "rolling",
-              usagePercent: 12.5,
-              resetAt: fetchedAt + 2 * 3600_000,
-              limitUsd: 12,
-            },
-            {
-              kind: "weekly",
-              usagePercent: 46.2,
-              resetAt: fetchedAt + 3 * 24 * 3600_000,
-              limitUsd: 30,
-            },
-            {
-              kind: "monthly",
-              usagePercent: 8.4,
-              resetAt: fetchedAt + 20 * 24 * 3600_000,
-              limitUsd: 60,
-            },
-          ],
-        };
-        return result as T;
-      }
-      if (!site.hasKey || /no-quota/i.test(site.baseUrl) || /no-quota/i.test(site.name)) {
-        const unsupported: SiteQuota = {
-          status: "unsupported",
-          remainingUsd: null,
-          usedUsd: null,
-          totalUsd: null,
-          unlimited: false,
-          expiresAt: null,
-          source: null,
-          endpoint: null,
-          fetchedAt: now(),
-          latencyMs: 4,
-          error: null,
-        };
-        return unsupported as T;
-      }
-      const result: SiteQuota = {
-        status: "available",
-        remainingUsd: 87.5,
-        usedUsd: 12.5,
-        totalUsd: 100,
-        unlimited: false,
-        unit: "USD",
-        expiresAt: Math.floor(Date.UTC(2026, 11, 31) / 1000),
-        source: "credit_grants",
-        endpoint: `${normalizeBaseUrl(site.baseUrl).codexBaseUrl}/dashboard/billing/credit_grants`,
-        fetchedAt: now(),
-        latencyMs: 12,
-        error: null,
-      };
-      return result as T;
+      return (await mockProbeQuota(site)) as T;
     }
     case "probe_site_api_key": {
       const siteId = args?.siteId as string;

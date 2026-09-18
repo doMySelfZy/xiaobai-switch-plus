@@ -7,10 +7,10 @@ import type {
   DeepLinkSiteImportResult,
   FetchModelsResult,
   RefreshAllSitesResult,
+  RefreshSiteResult,
   Site,
   SiteModel,
   SiteQuota,
-  SiteQuotaSummary,
   SwitchRouteResult,
   SwitchSiteApiKeyResult,
   UpdateSiteApiKeyInput,
@@ -25,6 +25,8 @@ const quotaInflight = new Map<string, Promise<SiteQuota>>();
 const modelInflight = new Map<string, Promise<FetchModelsResult>>();
 const modelRequestVersion = new Map<string, number>();
 const MAX_MODEL_REFRESH_CONCURRENCY = 4;
+/** 行内刷新指示器最短露出时间：两阶段都命中缓存时不让它闪一下就没。 */
+const MIN_REFRESH_INDICATOR_MS = 300;
 let refreshAllInflight: Promise<RefreshAllSitesResult> | null = null;
 
 function modelFetchKey(
@@ -140,6 +142,28 @@ function errorMessage(error: unknown): string {
     return String((error as { message: unknown }).message);
   }
   return String(error);
+}
+
+/**
+ * 余额命令 reject 时合成的尝试记录。
+ *
+ * 列表行第二行要能说出「为什么没有余额」，只写成功结果会让连不上的站点永远空白。
+ */
+function errorQuotaAttempt(message: string): SiteQuota {
+  return {
+    status: "error",
+    remainingUsd: null,
+    usedUsd: null,
+    totalUsd: null,
+    unlimited: false,
+    unit: null,
+    expiresAt: null,
+    source: null,
+    endpoint: null,
+    fetchedAt: Date.now(),
+    latencyMs: 0,
+    error: message,
+  };
 }
 
 async function mapWithConcurrency<T, R>(
@@ -495,95 +519,75 @@ export const useSiteStore = create<SiteState>((set, get) => ({
           quotaKey: quotaCacheKey(site),
         }));
 
-      set({ refreshingAll: true });
+      set({ refreshingAll: true, refreshingSiteIds: enabledSites.map((site) => site.id) });
       try {
-        const quotaPromise = invoke<SiteQuotaSummary[]>("refresh_sites_quota").then(
-          (value) => ({ ok: true as const, value, error: null }),
-          (error) => ({ ok: false as const, value: [] as SiteQuotaSummary[], error }),
-        );
-        
-        // Mark all enabled sites as refreshing
-        const refreshingIds = enabledSites.map(s => s.id);
-        console.log('[refreshAllSites] Setting refreshingSiteIds:', refreshingIds);
-        set({ refreshingSiteIds: refreshingIds });
-        
-        const modelResults = await mapWithConcurrency(
+        // 一个站点的一轮刷新 = 模型 + 余额两件事，所以两阶段必须在同一个 worker 里等齐：
+        // 余额曾经走批量命令、在模型循环之后才 await，于是所有行都停止转圈了头部按钮还在转。
+        // `refresh_site_quota` 而不是 `probe_site_quota`：前者顺带写后端余额缓存，
+        // 悬浮窗只读那份缓存（跨 webview 拿不到这里的 zustand 状态）。
+        const sites = await mapWithConcurrency(
           enabledSites,
           MAX_MODEL_REFRESH_CONCURRENCY,
-          async ({ id, apiKeyId }) => {
+          async ({ id, apiKeyId, quotaKey }) => {
             const startTime = Date.now();
-            try {
-              const result = await get().fetchModels(id, apiKeyId);
-              // Ensure minimum 300ms display time for the refresh indicator
-              const elapsed = Date.now() - startTime;
-              if (elapsed < 300) {
-                await new Promise(resolve => setTimeout(resolve, 300 - elapsed));
-              }
-              return { id, modelCount: result.models.length, ok: true, error: null };
-            } catch (error) {
-              // Ensure minimum 300ms display time even on error
-              const elapsed = Date.now() - startTime;
-              if (elapsed < 300) {
-                await new Promise(resolve => setTimeout(resolve, 300 - elapsed));
-              }
-              return { id, modelCount: 0, ok: false, error: errorMessage(error) };
-            } finally {
-              // Remove this site from refreshingSiteIds when its fetch completes
-              console.log(`[refreshAllSites] Removing site ${id} from refreshingSiteIds`);
-              set((state) => ({
-                refreshingSiteIds: state.refreshingSiteIds.filter(siteId => siteId !== id),
-              }));
+            const [model, quota] = await Promise.all([
+              get()
+                .fetchModels(id, apiKeyId)
+                .then(
+                  (result) => ({ modelCount: result.models.length, error: null }),
+                  (error) => ({ modelCount: 0, error: errorMessage(error) }),
+                ),
+              invoke<SiteQuota>("refresh_site_quota", { siteId: id }).then(
+                (value) => ({ value, error: null }),
+                (error) => ({ value: null, error: errorMessage(error) }),
+              ),
+            ]);
+
+            const current = get().sites.find((site) => site.id === id);
+            // reject 也要留下尝试记录，否则连不上的站点在列表里永远是空白一行。
+            const attempt =
+              quota.value ?? errorQuotaAttempt(quota.error ?? "quota refresh failed");
+            const quotaOk =
+              quota.error === null && attempt.status === "available" && !attempt.error;
+            // 站点配置在这轮里被改过（换密钥 / 换 Base URL）就不写回，避免旧响应覆盖新状态。
+            if (current && quotaKey === quotaCacheKey(current)) {
+              set({
+                quotaAttemptBySite: { ...get().quotaAttemptBySite, [id]: attempt },
+                quotaAttemptCacheKeyBySite: {
+                  ...get().quotaAttemptCacheKeyBySite,
+                  [id]: quotaKey,
+                },
+                ...(attempt.status === "available"
+                  ? {
+                      quotaBySite: { ...get().quotaBySite, [id]: attempt },
+                      quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [id]: quotaKey },
+                    }
+                  : {}),
+              });
             }
+
+            // 指示器至少露一面：两阶段都命中缓存时整轮可能连一帧都不到。
+            const elapsed = Date.now() - startTime;
+            if (elapsed < MIN_REFRESH_INDICATOR_MS) {
+              await new Promise((resolve) =>
+                setTimeout(resolve, MIN_REFRESH_INDICATOR_MS - elapsed),
+              );
+            }
+            set((state) => ({
+              refreshingSiteIds: state.refreshingSiteIds.filter((siteId) => siteId !== id),
+            }));
+
+            return {
+              siteId: id,
+              modelCount: model.modelCount,
+              modelsOk: model.error === null,
+              quotaOk,
+              modelError: model.error,
+              quotaError:
+                quota.error ?? quota.value?.error ?? (quotaOk ? null : "quota refresh failed"),
+            } satisfies RefreshSiteResult;
           },
         );
-
-        const quotaResult = await quotaPromise;
-        const quotaSummaries = quotaResult.value;
-        const quotaError = quotaResult.ok ? null : errorMessage(quotaResult.error);
-
-        const quotaById = new Map(quotaSummaries.map((summary) => [summary.siteId, summary.quota]));
-        const quotaOkById = new Map(
-          quotaSummaries.map((summary) => [
-            summary.siteId,
-            summary.quota?.status === "available" && !summary.quota.error,
-          ]),
-        );
-        const sites = enabledSites.map(({ id, quotaKey }, index) => {
-          const quota = quotaById.get(id) ?? null;
-          const current = get().sites.find((site) => site.id === id);
-          const quotaOk = quotaError === null && Boolean(quotaOkById.get(id));
-          if (current && quota && quotaKey === quotaCacheKey(current)) {
-            const nextAttempt = {
-              ...get().quotaAttemptBySite,
-              [id]: quota,
-            };
-            const nextAttemptKeys = {
-              ...get().quotaAttemptCacheKeyBySite,
-              [id]: quotaKey,
-            };
-            const nextSuccess =
-              quota.status === "available"
-                ? {
-                    quotaBySite: { ...get().quotaBySite, [id]: quota },
-                    quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [id]: quotaKey },
-                  }
-                : {};
-            set({
-              quotaAttemptBySite: nextAttempt,
-              quotaAttemptCacheKeyBySite: nextAttemptKeys,
-              ...nextSuccess,
-            });
-          }
-          const model = modelResults[index];
-          return {
-            siteId: id,
-            modelCount: model.modelCount,
-            modelsOk: model.ok,
-            quotaOk,
-            modelError: model.error,
-            quotaError: quotaError ?? (quota?.error ?? (quotaOk ? null : "quota refresh failed")),
-          };
-        });
         const successCount = sites.filter((site) => site.modelsOk && site.quotaOk).length;
         const result = {
           sites,
@@ -594,7 +598,6 @@ export const useSiteStore = create<SiteState>((set, get) => ({
         return result;
       } finally {
         set({ refreshingAll: false });
-        // refreshingSiteIds is cleared per-site in the mapWithConcurrency callback
       }
     })();
 
@@ -703,26 +706,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     };
     run = invoke<SiteQuota>("probe_site_quota", { siteId })
       .then(storeIfCurrent)
-      .catch((e) => {
-        const message =
-          typeof e === "object" && e && "message" in e
-            ? String((e as { message: string }).message)
-            : String(e);
-        return storeIfCurrent({
-          status: "error",
-          remainingUsd: null,
-          usedUsd: null,
-          totalUsd: null,
-          unlimited: false,
-          unit: null,
-          expiresAt: null,
-          source: null,
-          endpoint: null,
-          fetchedAt: Date.now(),
-          latencyMs: 0,
-          error: message,
-        });
-      })
+      .catch((e) => storeIfCurrent(errorQuotaAttempt(errorMessage(e))))
       .finally(() => {
         if (quotaInflight.get(key) === run) quotaInflight.delete(key);
         const current = get().sites.find((s) => s.id === siteId);

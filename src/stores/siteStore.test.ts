@@ -58,6 +58,7 @@ describe("siteStore fetchModels", () => {
       hydrated: false,
       fetchingModels: false,
       refreshingAll: false,
+      refreshingSiteIds: [],
       fetchingModelsByKey: {},
       fetchingModelsBySite: {},
       error: null,
@@ -118,6 +119,43 @@ describe("siteStore fetchModels", () => {
     expect(useSiteStore.getState().refreshingAll).toBe(false);
   });
 
+  it("keeps a site's list indicator until its models and quota both settle", async () => {
+    const slow = await useSiteStore.getState().createSite({
+      name: "Slow",
+      baseUrl: "https://slow.example.com",
+      apiKey: fakeKey("slow"),
+    });
+    const fast = await useSiteStore.getState().createSite({
+      name: "Fast",
+      baseUrl: "https://fast.example.com",
+      apiKey: fakeKey("fast"),
+    });
+
+    const quotaGate = deferred<SiteQuota>();
+    setBrowserQuotaProbeHandler((site) =>
+      site.id === slow.id
+        ? quotaGate.promise
+        : availableQuota("https://fast.example.com/quota", 60, Date.now()),
+    );
+
+    const run = useSiteStore.getState().refreshAllSites();
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([slow.id, fast.id]);
+
+    // 两边的模型都早早就回来了：慢站点必须还在转，因为它这轮的余额没落地；
+    // 快站点两阶段都完成，指示器逐站淡出。
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([slow.id]);
+
+    quotaGate.resolve(availableQuota("https://slow.example.com/quota", 30, Date.now()));
+    const result = await run;
+
+    expect(result.successCount).toBe(2);
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+    expect(useSiteStore.getState().refreshingAll).toBe(false);
+    expect(useSiteStore.getState().quotaBySite[slow.id]?.remainingUsd).toBe(30);
+    expect(useSiteStore.getState().quotaBySite[fast.id]?.remainingUsd).toBe(60);
+  });
+
   it("uses the captured active key when a site has multiple keys", async () => {
     const site = await useSiteStore.getState().createSite({
       name: "Keyed Relay",
@@ -135,6 +173,23 @@ describe("siteStore fetchModels", () => {
     expect(
       useSiteStore.getState().modelsBySite[site.id]?.every((model) => model.apiKeyId === activeKey),
     ).toBe(true);
+  });
+
+  it("records why the balance is missing when the global refresh rejects", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Relay",
+      baseUrl: "https://api.example.com",
+      apiKey: fakeKey("plain"),
+    });
+    setBrowserQuotaProbeHandler(() =>
+      Promise.reject({ code: "network_error", message: "connection refused" }),
+    );
+
+    const result = await useSiteStore.getState().refreshAllSites();
+
+    expect(result.sites[0]?.quotaOk).toBe(false);
+    expect(useSiteStore.getState().quotaAttemptBySite[site.id]?.error).toBe("connection refused");
+    expect(useSiteStore.getState().quotaBySite[site.id]).toBeUndefined();
   });
 
   it("creates a site with extra api keys in one call", async () => {

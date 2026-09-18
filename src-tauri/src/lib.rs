@@ -252,7 +252,7 @@ pub fn run() {
             commands::take_restore_result,
             commands::get_all_sites_quota,
             commands::toggle_floating_window,
-            commands::refresh_sites_quota,
+            commands::refresh_site_quota,
             commands::set_floating_window_collapsed,
             commands::show_floating_window_cmd,
             commands::hide_floating_window_cmd,
