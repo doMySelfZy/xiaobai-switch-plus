@@ -17,6 +17,11 @@
 - 「预填表单」这条通路已经存在并被深链使用：`src/hooks/useSiteDeepLink.tsx:135-139` 在缺 apiKey 时转成 `setPendingSiteForm(payload)`，`src/pages/SitesPage.tsx:89-102` 把它变成 `SiteFormInitialValues` 打开表单；该类型只有 6 个字段（`src/components/sites/SiteFormModal.tsx:101-108`）。
 - 生产代码里 ModelScope 相关为**零**（全仓搜 `modelscope|magicube|魔搭` 只命中规划文档与原型 mock）。
 
+## 决策记录
+
+- 2026-09-18：用户在「显示魔粒余额 / 不显示余额 / 附带次数估算」三选一中选 **显示魔粒余额**。因此 M2 保留在范围内；次数估算因无官方换算依据被明确排除（见 Non-Goals）。
+- 同一天确认：模板入口先做 M1，M2 紧随其后，两阶段各自可独立提交。
+
 ## Goals
 
 1. 用户在「添加站点」时可以选一个服务商模板，最少只需填**名字 + 一把 API Key**。
