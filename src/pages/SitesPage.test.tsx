@@ -892,6 +892,35 @@ describe("SitesPage", () => {
     expect(useSiteStore.getState().sites.map((s) => s.name)).toEqual(["Beta", "Alpha"]);
     expect(listNames()).toEqual(["Beta", "Alpha"]);
   });
+
+  it("adds a site from the ModelScope template needing only name and key", async () => {
+    render(
+      <Wrapper>
+        <SitesPage />
+      </Wrapper>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "按模板添加站点" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "ModelScope 魔搭" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByPlaceholderText("https://api.example.com")).toHaveValue(
+      "https://api-inference.modelscope.cn/v1",
+    );
+
+    fireEvent.change(within(dialog).getByPlaceholderText("My Relay"), {
+      target: { value: "魔搭直连" },
+    });
+    fireEvent.change(within(dialog).getByPlaceholderText("sk-..."), {
+      target: { value: "ms-token" },
+    });
+    fireEvent.click(within(dialog).getByRole("button", { name: /保.*存/ }));
+
+    await waitFor(() => {
+      const created = useSiteStore.getState().sites.find((site) => site.name === "魔搭直连");
+      expect(created?.baseUrl).toBe("https://api-inference.modelscope.cn/v1");
+    });
+  });
 });
 
 function appliedStatus(

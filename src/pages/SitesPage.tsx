@@ -15,11 +15,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { App, Button, Checkbox, Empty, Skeleton, Switch, Tooltip, theme } from "antd";
-import { Plus, Trash2, Pencil, RefreshCw } from "lucide-react";
+import { Trash2, Pencil, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useApplyStore, useSiteStore, useUIStore } from "@/stores";
 import { reorderList } from "@/lib/reorder";
 import { SiteFormModal, type SiteFormInitialValues } from "@/components/sites/SiteFormModal";
+import { AddSitePresetButton } from "@/components/sites/AddSitePresetButton";
+import { sitePresetById, type SitePresetId } from "@/lib/sitePresets";
 import { ManualModelModal } from "@/components/sites/ManualModelModal";
 import { GoApplyButton } from "@/components/sites/GoApplyButton";
 import { ModelPicker } from "@/components/sites/ModelPicker";
@@ -101,9 +103,14 @@ export function SitesPage() {
     setPendingSiteForm(null);
   }, [pendingSiteForm, setPendingSiteForm]);
 
-  const openCreateForm = () => {
+  const openCreateForm = (presetId: SitePresetId = "custom") => {
+    const preset = sitePresetById(presetId);
     setEditing(null);
-    setFormInitial(null);
+    setFormInitial(
+      preset && preset.baseUrls.length
+        ? { baseUrls: preset.baseUrls, protocol: preset.protocol }
+        : null,
+    );
     setFormOpen(true);
     setForceAdvancedOpen(false);
   };
@@ -394,7 +401,7 @@ export function SitesPage() {
   if (!loading && sites.length === 0) {
     return (
       <>
-        <EmptyOnboarding onAdd={openCreateForm} />
+        <EmptyOnboarding onAdd={openCreateForm} onAddPreset={openCreateForm} />
         <SiteFormModal
           open={formOpen}
           site={editing}
@@ -437,14 +444,12 @@ export function SitesPage() {
                 aria-label={t("sites.refreshAll")}
               />
             </Tooltip>
-            <Button
+            <AddSitePresetButton
+              label={t("sites.add")}
               color="default"
               size="small"
-              icon={<Plus size={14} />}
-              onClick={openCreateForm}
-            >
-              {t("sites.add")}
-            </Button>
+              onSelect={openCreateForm}
+            />
           </div>
         </div>
         <div className="scroll-y flex flex-1 flex-col gap-2 px-2 pb-2">

@@ -549,4 +549,49 @@ describe("SiteFormModal base url list", () => {
       ),
     ).toBeInTheDocument();
   });
+
+  // 免除判断只看当前输入的 Base URL，不看用户点过哪个模板。
+  it("waives the newapi credential group once the host is a known vendor", async () => {
+    render(
+      <Wrapper>
+        <SiteFormModal open site={null} onClose={() => undefined} />
+      </Wrapper>,
+    );
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.click(within(dialog).getByText("可选配置"));
+    expect(within(dialog).getByPlaceholderText("Access Token")).toBeInTheDocument();
+
+    // baseUrls 经 Form.useWatch 回流，要等一帧才参与判定。
+    fireEvent.change(within(dialog).getByPlaceholderText("https://api.example.com"), {
+      target: { value: "https://api-inference.modelscope.cn/v1" },
+    });
+    expect(await within(dialog).findByText(/不需要 NewAPI 访问令牌/)).toBeInTheDocument();
+    expect(within(dialog).queryByPlaceholderText("Access Token")).toBeNull();
+  });
+
+  it("restores the credential group when the host moves back to a third-party relay", async () => {
+    render(
+      <Wrapper>
+        <SiteFormModal
+          open
+          site={null}
+          initialValues={{ baseUrls: ["https://opencode.ai/zen/go/v1"] }}
+          onClose={() => undefined}
+        />
+      </Wrapper>,
+    );
+    const dialog = screen.getByRole("dialog");
+
+    fireEvent.click(within(dialog).getByText("可选配置"));
+    await waitFor(() => {
+      expect(within(dialog).queryByPlaceholderText("Access Token")).toBeNull();
+    });
+
+    fireEvent.change(within(dialog).getByPlaceholderText("https://api.example.com"), {
+      target: { value: "https://relay.example.com/v1" },
+    });
+    expect(await within(dialog).findByPlaceholderText("Access Token")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/不需要 NewAPI 访问令牌/)).toBeNull();
+  });
 });

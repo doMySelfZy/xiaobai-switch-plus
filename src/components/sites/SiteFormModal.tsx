@@ -11,6 +11,7 @@ import { BaseUrlListInput } from "./BaseUrlListInput";
 import { invalidateSiteIconCache } from "@/lib/siteIcon";
 import { siteApiKeys } from "@/lib/siteApiKey";
 import { normalizeBaseUrls, siteBaseUrls } from "@/lib/urlNormalize";
+import { quotaCredentialHint } from "@/lib/siteProviderKinds";
 import { formatQuotaAmountLocalized } from "@/lib/quotaProbe";
 import {
   anyCodexCapabilityOn,
@@ -155,6 +156,8 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
   } | null>(null);
   const watchedUrls = Form.useWatch("baseUrls", form) as string[] | undefined;
   const previewUrl = watchedUrls?.find((u) => String(u ?? "").trim()) ?? "";
+  /** 免除 newapi 凭据时给前端的说明；null = 该 host 仍按 newapi 口径提示。 */
+  const quotaNoteKey = quotaCredentialHint(previewUrl);
 
   useEffect(() => {
     if (!open) return;
@@ -430,11 +433,13 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
         finalHeaders = validated.headers ?? [];
       }
       setProxyHeadersError(null);
-      // 已配置令牌但解密回填失败时省略字段，避免把令牌意外清空。
-      const omitNewapiToken = site?.newapiConfigured === true && newapiTokenLoadFailed;
-      const newapiAccessToken = omitNewapiToken
+      // 令牌密文解密失败、或额度组因命中服务商模板被隐藏时省略字段，避免把既有值意外清空。
+      const omitNewapi =
+        Boolean(quotaNoteKey) || (site?.newapiConfigured === true && newapiTokenLoadFailed);
+      const newapiAccessToken = omitNewapi
         ? undefined
         : (values.newapiAccessToken?.trim() || "");
+      const newapiUserId = omitNewapi ? undefined : (values.newapiUserId?.trim() || "");
       setSaving(true);
       let saved: Site;
       const isCreate = !site;
@@ -448,7 +453,7 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
           notes: values.notes ?? null,
           capabilities,
           newapiAccessToken,
-          newapiUserId: values.newapiUserId?.trim() || "",
+          newapiUserId,
           proxyHeaders: finalHeaders,
         });
         invalidateSiteIconCache(site.id);
@@ -466,8 +471,8 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
           protocol: values.protocol,
           notes: values.notes ?? null,
           capabilities,
-          newapiAccessToken: values.newapiAccessToken?.trim() || null,
-          newapiUserId: values.newapiUserId?.trim() || null,
+          newapiAccessToken: newapiAccessToken ?? null,
+          newapiUserId: newapiUserId ?? null,
           proxyHeaders: finalHeaders,
         });
       }
@@ -608,49 +613,57 @@ export function SiteFormModal({ open, site, initialValues, forceAdvancedOpen, on
                         {t("sites.groupQuota")}
                       </Text>
                     </div>
-                    <div className="flex flex-wrap gap-x-3">
-                      <Form.Item
-                        name="newapiAccessToken"
-                        label={t("sites.newapiAccessToken")}
-                        className="min-w-[180px] flex-1"
-                        extra={
-                          site?.newapiConfigured && !newapiTokenLoadFailed
-                            ? t("sites.newapiTokenSavedHint")
-                            : t("sites.newapiTokenHint")
-                        }
-                      >
-                        <Input.Password autoComplete="new-password" placeholder="Access Token" />
-                      </Form.Item>
-                      <Form.Item
-                        name="newapiUserId"
-                        label={t("sites.newapiUserId")}
-                        className="min-w-[120px] flex-1"
-                        extra={t("sites.newapiUserIdHint")}
-                      >
-                        <Input allowClear placeholder="1" inputMode="numeric" />
-                      </Form.Item>
-                    </div>
-                    <div className="mt-[-8px] mb-3 flex items-center gap-3">
-                      <Button
-                        size="small"
-                        loading={newapiTesting}
-                        onClick={() => void handleTestNewapi()}
-                      >
-                        {t("sites.newapiTest")}
-                      </Button>
-                      {newapiTestResult && (
-                        <Text
-                          type={newapiTestResult.ok ? "success" : "danger"}
-                          style={{ fontSize: 12 }}
-                        >
-                          {newapiTestResult.ok
-                            ? t("sites.newapiTestOk", { amount: newapiTestResult.amount })
-                            : t("sites.newapiTestFailed", {
-                                detail: newapiTestResult.detail,
-                              })}
-                        </Text>
-                      )}
-                    </div>
+                    {quotaNoteKey ? (
+                      <Text type="secondary" className="mb-3 block" style={{ fontSize: 12 }}>
+                        {t(quotaNoteKey)}
+                      </Text>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap gap-x-3">
+                          <Form.Item
+                            name="newapiAccessToken"
+                            label={t("sites.newapiAccessToken")}
+                            className="min-w-[180px] flex-1"
+                            extra={
+                              site?.newapiConfigured && !newapiTokenLoadFailed
+                                ? t("sites.newapiTokenSavedHint")
+                                : t("sites.newapiTokenHint")
+                            }
+                          >
+                            <Input.Password autoComplete="new-password" placeholder="Access Token" />
+                          </Form.Item>
+                          <Form.Item
+                            name="newapiUserId"
+                            label={t("sites.newapiUserId")}
+                            className="min-w-[120px] flex-1"
+                            extra={t("sites.newapiUserIdHint")}
+                          >
+                            <Input allowClear placeholder="1" inputMode="numeric" />
+                          </Form.Item>
+                        </div>
+                        <div className="mt-[-8px] mb-3 flex items-center gap-3">
+                          <Button
+                            size="small"
+                            loading={newapiTesting}
+                            onClick={() => void handleTestNewapi()}
+                          >
+                            {t("sites.newapiTest")}
+                          </Button>
+                          {newapiTestResult && (
+                            <Text
+                              type={newapiTestResult.ok ? "success" : "danger"}
+                              style={{ fontSize: 12 }}
+                            >
+                              {newapiTestResult.ok
+                                ? t("sites.newapiTestOk", { amount: newapiTestResult.amount })
+                                : t("sites.newapiTestFailed", {
+                                    detail: newapiTestResult.detail,
+                                  })}
+                            </Text>
+                          )}
+                        </div>
+                      </>
+                    )}
                     <div className="mb-2 mt-1">
                       <Text strong style={{ fontSize: 13 }}>
                         {t("sites.groupProxy")}

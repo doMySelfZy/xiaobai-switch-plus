@@ -49,6 +49,7 @@ import type {
 import type { AgentRules, AgentRulesApplyResult } from "@/types/rules";
 import type { LocalProxyRequestLogEntry, LocalProxyStatus, ProxyHeader } from "@/types/proxy";
 import { keyPrefix, normalizeBaseUrl } from "./urlNormalize";
+import { isOpenCodeGoBase } from "./siteProviderKinds";
 
 const DEFAULT_SETTINGS: AppSettings = {
   language: "zh-CN",
@@ -457,7 +458,7 @@ export function setBrowserQuotaProbeHandler(
  */
 async function mockProbeQuota(site: Site): Promise<SiteQuota> {
   if (quotaProbeHandler) return quotaProbeHandler(site);
-  if (isOpencodeGoBase(site.baseUrl)) {
+  if (isOpenCodeGoBase(site.baseUrl)) {
     const fetchedAt = now();
     const base: SiteQuota = {
       status: "available",
@@ -667,21 +668,6 @@ function requireKey(site: Site, apiKeyId?: string | null): SiteApiKeySummary {
     throw { code: "validation_failed", message: "api key is not the site's current key" };
   }
   return key;
-}
-
-/** Mirrors the Rust is_opencode_go_base gate: https + opencode.ai + `/zen/go` segments. */
-function isOpencodeGoBase(baseUrl: string): boolean {
-  try {
-    const url = new URL(baseUrl.trim());
-    if (url.protocol !== "https:") return false;
-    if (url.hostname !== "opencode.ai") return false;
-    const segments = url.pathname.split("/").filter(Boolean);
-    return segments.some(
-      (segment, index) => segment === "zen" && segments[index + 1] === "go",
-    );
-  } catch {
-    return false;
-  }
 }
 
 function normalizeSkillSource(source: string): string {

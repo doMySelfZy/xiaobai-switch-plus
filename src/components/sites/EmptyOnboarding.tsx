@@ -1,13 +1,18 @@
 import { Button, Steps, theme } from "antd";
 import { useTranslation } from "react-i18next";
 import { useUIStore } from "@/stores";
+import { AddSitePresetButton } from "./AddSitePresetButton";
+import type { SitePresetId } from "@/lib/sitePresets";
 import appIconUrl from "../../../assets/brand/app-icon-1024.png?url";
 
 interface Props {
+  /** 走配置向导（等价于自定义模板）。 */
   onAdd: () => void;
+  /** 按服务商模板直接打开添加表单。 */
+  onAddPreset: (presetId: SitePresetId) => void;
 }
 
-export function EmptyOnboarding({ onAdd }: Props) {
+export function EmptyOnboarding({ onAdd, onAddPreset }: Props) {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const setWizardOpen = useUIStore((s) => s.setWizardOpen);
@@ -33,16 +38,24 @@ export function EmptyOnboarding({ onAdd }: Props) {
           { title: t("onboarding.step3") },
         ]}
       />
-      <Button
-        type="primary"
-        size="large"
-        onClick={() => {
-          setWizardOpen(true);
-          onAdd();
-        }}
-      >
-        {t("sites.startWizard")}
-      </Button>
+      <div className="flex flex-col items-center gap-2">
+        <Button
+          type="primary"
+          size="large"
+          onClick={() => {
+            setWizardOpen(true);
+            onAdd();
+          }}
+        >
+          {t("sites.startWizard")}
+        </Button>
+        <AddSitePresetButton
+          label={t("sites.addByPreset")}
+          type="text"
+          size="large"
+          onSelect={onAddPreset}
+        />
+      </div>
     </div>
   );
 }

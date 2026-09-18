@@ -4,17 +4,17 @@
 
 ## M1 前端模板与凭据免除
 
-- [ ] 1. 新建 `src/lib/siteProviderKinds.ts`：`isOpenCodeGoBase` / `isModelScopeBase` / `sitePresetFor` / `quotaCredentialHint`。
+- [x] 1. 新建 `src/lib/siteProviderKinds.ts`：`isOpenCodeGoBase` / `isModelScopeBase` / `sitePresetFor` / `quotaCredentialHint`。
   - 先写测试 `src/lib/siteProviderKinds.test.ts`，opencode 用例从 `src-tauri/src/quota_probe/mod.rs:3771-3785` 的反例照搬（`api.opencode.ai`、`opencode.ai.evil.com`、`http://`、`/zen/gopher`、`/zen/go-v2`），魔搭补 `modelscope.cn`、`api-inference.modelscope.cn.evil.com`、`http://api-inference.modelscope.cn`。
   - 验证：`npx vitest run src/lib/siteProviderKinds.test.ts`
-- [ ] 2. `src/lib/browserMock.ts:672-685` 的平行实现改为 import 第 1 步的 helper，删掉本地副本。
+- [x] 2. `src/lib/browserMock.ts:672-685` 的平行实现改为 import 第 1 步的 helper，删掉本地副本。
   - 验证：`npx vitest run src/lib src/pages/FloatingWindow.test.tsx`
-- [ ] 3. 新建 `src/lib/sitePresets.ts` 目录常量（`custom` / `opencode-go` / `modelscope`），字段见 design.md 第 3 节；文案 key 落 `src/i18n/locales/zh-CN.json` 与 `en-US.json`。
-- [ ] 4. 「添加站点」入口接模板选择：只走 `SiteFormInitialValues` + `SitesPage.tsx:89-102` 既有通路，不新建第二个创建弹窗、不扩 `SiteFormInitialValues` 字段。
+- [x] 3. 新建 `src/lib/sitePresets.ts` 目录常量（`custom` / `opencode-go` / `modelscope`），字段见 design.md 第 3 节；文案 key 落 `src/i18n/locales/zh-CN.json` 与 `en-US.json`。
+- [x] 4. 「添加站点」入口接模板选择：只走 `SiteFormInitialValues` + `SitesPage.tsx:89-102` 既有通路，不新建第二个创建弹窗、不扩 `SiteFormInitialValues` 字段。
   - 测试：选魔搭后表单里 Base URL / 协议已预填、保存只需名字 + key。
-- [ ] 5. `SiteFormModal.tsx:612-631` 的额度组按 `sitePresetFor(当前第一项 Base URL)` 免除；判断只看输入，不看点击历史。
+- [x] 5. `SiteFormModal.tsx:612-631` 的额度组按 `sitePresetFor(当前第一项 Base URL)` 免除；判断只看输入，不看点击历史。
   - 测试：改成第三方 host 后免除提示消失。
-- [ ] 6. 阶段检查点：`pnpm typecheck && pnpm test:run`。
+- [x] 6. 阶段检查点：`pnpm typecheck && pnpm test:run`。
 
 ## M2 魔搭魔粒余额
 
