@@ -225,7 +225,7 @@
     "deepLinkSecurityHint": "Only import trusted links to avoid leaving keys in browser history",
     "advanced": "Advanced configuration",
     "groupSiteInfo": "Site info",
-    "presetCustom": "Custom (OpenAI-compatible)",
+    "presetCustom": "Custom",
     "presetOpencodeGo": "OpenCode Go",
     "presetModelscope": "ModelScope",
     "quotaNoteOpenCodeGo": "OpenCode Go usage is read with the site's own API key — no NewAPI access token or user ID needed.",

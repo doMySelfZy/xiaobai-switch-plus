@@ -225,7 +225,7 @@
     "deepLinkSecurityHint": "请确认来源可信后再导入以免密钥残留在浏览器历史中",
     "advanced": "高级配置",
     "groupSiteInfo": "站点信息",
-    "presetCustom": "自定义（OpenAI 兼容）",
+    "presetCustom": "自定义",
     "presetOpencodeGo": "OpenCode Go",
     "presetModelscope": "ModelScope 魔搭",
     "quotaNoteOpenCodeGo": "OpenCode Go 的用量走站点自己的 API Key，不需要 NewAPI 访问令牌与用户 ID。",
