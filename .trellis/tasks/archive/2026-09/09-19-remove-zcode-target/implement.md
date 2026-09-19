@@ -146,7 +146,7 @@ pnpm test:run     # 432 passed / 0 failed，55 / 57 文件通过
 - 两个流水线事实供发版时决策，本任务不动：① `filter_unconventional = false` 且 `^chore` / `^docs` / `^style` 都有分组，本次 6 条提交里 4 条内部提交（trellis 文档、归档、日志、clippy 样式）会原样进用户可见的发布说明；② `publish-release` 会用同一份生成内容**覆写**草稿正文，所以在 GitHub 上手工编辑草稿是白改 —— 要加人工说明只能往 commit 主题或 `cliff.toml` 里想。
 - 本机未装 `git-cliff`（不静默装系统依赖），以上是按模板人肉推的，**不是渲染实测**。
 
-**顺带发现（未处理，与本任务无关）**：真机 DOM 走查时看到两处用户可见文案只列了三个目标 —— `app.tagline`（zh「一键接入 Claude Code / Codex / Pi」/ en "…for Claude Code, Codex & Pi"）与 `onboarding.welcomeDesc`（zh「接入 Claude Code、Codex 或 Pi。」/ en "…for Claude Code, Codex, or Pi."），中英**双侧都漏了 Prime**。`git log -L` 证明这两行停在 `fe5c8e8`（接 Pi 那版），是 **Prime 落地时漏改**，不是本任务删 ZCode 删坏的。建议单独小任务补。
+**顺带发现（已就地修掉，提交 `61f4ea8`，不属本任务）**：真机 DOM 走查时看到三处用户可见文案只列了三个目标 —— `app.tagline`、`onboarding.welcomeDesc`、`sites.routeSwitchHint`，中英**双侧都漏了 Prime**。`git log -L` 证明这些行停在 `fe5c8e8`（接 Pi 那版），是 **Prime 落地时漏改**，不是本任务删 ZCode 删坏的。同一次扫描顺手确认 README 的目标清单四处都是全的。`settings.webdav.restoreConfirmBody` 只提 Claude/Codex，但它是「恢复不会自动覆盖哪些配置」的举例、不是支持清单，语义上不算漏，未动。
 
 **工具链核查（收尾时经用户批准 `rustup component add clippy rustfmt`：clippy 0.1.98 / rustfmt 1.9.0-stable）**：两项都按「只算本任务引入的增量」口径做，不做全仓清洗。
 
