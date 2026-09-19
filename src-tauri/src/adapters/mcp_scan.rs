@@ -483,28 +483,10 @@ pub fn load_entry_for_import(
     }
 }
 
-/// 条目的规范化指纹：用于判断客户端里那条未托管条目是否仍与库内记录一致。
-///
-/// 只做哈希、不保留明文；键顺序归一化，避免同一个条目因序列化顺序不同而误判为「已改动」。
-pub fn entry_fingerprint(
-    kind: McpKind,
-    config: &Value,
-    env: &Value,
-    headers: &Value,
-) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(format!("{kind:?}").as_bytes());
-    for value in [config, env, headers] {
-        hasher.update(canonical(value).as_bytes());
-        hasher.update([0]);
-    }
-    hex::encode(hasher.finalize())
-}
-
 /// 递归排序对象键，产出稳定字符串。
 ///
-/// `pub(crate)`：接管比对（`adapters::mcp`）也需要同一套规范化，共用一份避免两边口径分叉。
+/// `pub(crate)`：接管比对（`adapters::mcp`）与身份指纹（`adapters::mcp_identity`）都需要
+/// 同一套规范化，共用一份避免两边口径分叉。
 pub(crate) fn canonical(value: &Value) -> String {
     match value {
         Value::Object(map) => {
@@ -694,35 +676,6 @@ X_Trace = "PLACEHOLDER"
 
         let error = load_entry_for_import(ScanTarget::Pi, "nope", &settings).unwrap_err();
         assert!(error.to_string().contains("nope"));
-    }
-
-    #[test]
-    fn fingerprint_is_stable_across_key_order_but_sensitive_to_value() {
-        let config = json!({"command": "npx", "args": ["-y", "x"]});
-        let env = json!({"A": "1", "B": "2"});
-        let reordered = json!({"B": "2", "A": "1"});
-
-        let base = entry_fingerprint(McpKind::Stdio, &config, &env, &json!({}));
-        let same = entry_fingerprint(McpKind::Stdio, &config, &reordered, &json!({}));
-        assert_eq!(base, same, "key order must not change the fingerprint");
-
-        let changed = entry_fingerprint(McpKind::Stdio, &config, &json!({"A": "1", "B": "3"}), &json!({}));
-        assert_ne!(base, changed, "a changed value must change the fingerprint");
-
-        let other_kind = entry_fingerprint(McpKind::Http, &config, &env, &json!({}));
-        assert_ne!(base, other_kind);
-    }
-
-    #[test]
-    fn fingerprint_does_not_leak_values() {
-        let fingerprint = entry_fingerprint(
-            McpKind::Stdio,
-            &json!({"command": "npx"}),
-            &json!({"TOKEN": "PLACEHOLDER_SECRET"}),
-            &json!({}),
-        );
-        assert!(!fingerprint.contains("PLACEHOLDER_SECRET"));
-        assert_eq!(fingerprint.len(), 64, "sha256 hex");
     }
 
     #[test]

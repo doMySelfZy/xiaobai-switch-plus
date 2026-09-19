@@ -1,12 +1,16 @@
 use crate::{
     adapters::mcp as mcp_adapters,
+    adapters::mcp_identity,
+    crypto::Crypto,
     domain::{AppSettings, McpServer, McpServerInput, McpServerSummary, TargetKind},
-    error::AppResult,
+    error::{AppError, AppResult},
     paths::backups_dir,
     repo,
     state::AppState,
 };
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use tauri::State;
 
 #[tauri::command]
@@ -160,13 +164,45 @@ pub fn save_mcp_server(
     state: State<'_, AppState>,
     input: McpServerInput,
 ) -> AppResult<McpSaveResult> {
-    let server = state
-        .db
-        .with_conn(|conn| repo::mcp::save(conn, &state.crypto, input))?;
+    let server = state.db.with_conn(|conn| {
+        // 身份去重守卫（命令层）：粗身份撞上别的行就明确拒绝，绝不静默写入第二条。
+        // repo::mcp::save 只比名字的重名校验保持原样，这里是叠加判定。
+        let servers = repo::mcp::list_full(conn, &state.crypto)?;
+        guard_identity_collision(&servers, &input)?;
+        repo::mcp::save(conn, &state.crypto, input)
+    })?;
     // 之前应用过的目标要重新同步一遍：改名或取消目标后，旧客户端里的托管条目才能清掉。
     // 同步失败不能反过来判定保存失败（数据已落库），但必须把目标级结果回给界面。
     let sweep = apply_to_targets(&state, &[])?;
     Ok(McpSaveResult { server, sweep })
+}
+
+/// 找出与 `input` 共享粗身份的**另一行**（按 `id` 编辑自身时排除自己）。
+fn identity_conflict<'a>(
+    servers: &'a [McpServer],
+    input: &McpServerInput,
+) -> Option<&'a McpServer> {
+    let identity = mcp_identity::coarse_identity(input.kind, &input.config);
+    servers.iter().find(|server| {
+        Some(server.id.as_str()) != input.id.as_deref()
+            && mcp_identity::coarse_identity(server.kind, &server.config) == identity
+    })
+}
+
+/// 手工新增/编辑保存的去重守卫：命中他行粗身份 → `validation_failed` 并点名冲突条目。
+/// 按 `id` 编辑自身（哪怕库里还留着存量重复）必须放行。
+fn guard_identity_collision(servers: &[McpServer], input: &McpServerInput) -> AppResult<()> {
+    if let Some(conflict) = identity_conflict(servers, input) {
+        return Err(AppError::new(
+            "validation_failed",
+            format!(
+                "这份配置与已有 MCP 条目「{}」指向同一个服务器。\
+                 为避免产生重复条目，本次没有写入：请直接编辑那条已有条目，或先处理重复项。",
+                conflict.name
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,19 +292,37 @@ fn targets_with_enabled_servers(servers: &[McpServer]) -> Vec<TargetKind> {
     desired
 }
 
-/// 把数据库里的 MCP 现状写到目标客户端。
+/// 找出「启用且共享粗身份」的重复组（最后防线判据）：每组返回成员名字，
+/// 按首次出现顺序稳定排列；不足两条不算组。禁用的条目不参与——它们本来就不会被写盘。
+fn identity_conflicts(servers: &[McpServer]) -> Vec<Vec<String>> {
+    let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+    for server in servers.iter().filter(|server| server.enabled) {
+        let identity = mcp_identity::coarse_identity(server.kind, &server.config);
+        match groups.iter_mut().find(|(known, _)| *known == identity) {
+            Some((_, names)) => names.push(server.name.clone()),
+            None => groups.push((identity, vec![server.name.clone()])),
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(_, names)| names)
+        .collect()
+}
+
+/// 把数据库现状写到目标客户端：纯磁盘工作，不碰数据库——便于用 tempdir 端到端测试。
 ///
-/// 实际写入的目标 = 本次请求的目标 ∪ 上次应用过的目标：这样用户把某个 MCP 从目标里移除后，
-/// 那个客户端里的托管条目会被清掉，而不是留成孤儿。空目标列表用于「删除后清理」。
-fn apply_to_targets(state: &AppState, requested: &[TargetKind]) -> AppResult<McpApplyResult> {
-    let settings = state.db.with_conn(repo::settings::get_settings)?;
-    let servers = state.db.with_conn(|conn| repo::mcp::list_full(conn, &state.crypto))?;
-    let previously_applied = state.db.with_conn(repo::mcp::applied_targets)?;
-
-    let union = merged_targets(requested, &previously_applied);
-
-    let backup_root = backups_dir()?.join("mcp");
-    std::fs::create_dir_all(&backup_root)?;
+/// 最后防线：某个目标上出现两条「启用且粗身份相同」的条目时，该目标**整体跳过**并报失败，
+/// 两条都不写入，也不做该目标的清理（宁可留陈旧的托管条目，也不猜用户想保留哪一条）；
+/// 其余目标照常应用。失败目标会被 `targets_to_record` 留在记录里，下一次应用自动重试。
+fn apply_servers_to_targets(
+    settings: &AppSettings,
+    servers: &[McpServer],
+    previously_applied: &[TargetKind],
+    requested: &[TargetKind],
+    backup_root: &Path,
+) -> Vec<McpApplyTargetResult> {
+    let union = merged_targets(requested, previously_applied);
 
     let mut results = Vec::new();
     for target in &union {
@@ -278,26 +332,45 @@ fn apply_to_targets(state: &AppState, requested: &[TargetKind]) -> AppResult<Mcp
             .cloned()
             .collect();
 
+        let conflicts = identity_conflicts(&target_servers);
+        if !conflicts.is_empty() {
+            let groups: Vec<String> = conflicts
+                .iter()
+                .map(|names| format!("「{}」", names.join(" / ")))
+                .collect();
+            results.push(McpApplyTargetResult {
+                target: *target,
+                ok: false,
+                backup_paths: Vec::new(),
+                message: format!(
+                    "检测到指向同一个服务器的重复 MCP 条目（{}），本次没有写入该目标：\
+                     两条都写进客户端会让同一个 MCP 被加载两遍。请先在 MCP 面板合并或停用其中一条。",
+                    groups.join("；")
+                ),
+            });
+            continue;
+        }
+
         let outcome = match target {
             TargetKind::ClaudeCode => mcp_adapters::apply_to_claude(
                 &target_servers,
                 settings.claude_home_override.as_deref(),
-                &backup_root,
+                backup_root,
             ),
             TargetKind::Codex => mcp_adapters::apply_to_codex(
                 &target_servers,
                 settings.codex_home_override.as_deref(),
-                &backup_root,
+                backup_root,
             ),
             TargetKind::Pi => mcp_adapters::apply_to_pi(
                 &target_servers,
                 settings.pi_agent_dir_override.as_deref(),
-                &backup_root,
+                backup_root,
             ),
             TargetKind::Prime => mcp_adapters::apply_to_prime(
                 &target_servers,
                 settings.prime_agent_dir_override.as_deref(),
-                &backup_root,
+                backup_root,
             ),
         };
 
@@ -316,6 +389,23 @@ fn apply_to_targets(state: &AppState, requested: &[TargetKind]) -> AppResult<Mcp
             }),
         }
     }
+    results
+}
+
+/// 把数据库里的 MCP 现状写到目标客户端。
+///
+/// 实际写入的目标 = 本次请求的目标 ∪ 上次应用过的目标：这样用户把某个 MCP 从目标里移除后，
+/// 那个客户端里的托管条目会被清掉，而不是留成孤儿。空目标列表用于「删除后清理」。
+fn apply_to_targets(state: &AppState, requested: &[TargetKind]) -> AppResult<McpApplyResult> {
+    let settings = state.db.with_conn(repo::settings::get_settings)?;
+    let servers = state.db.with_conn(|conn| repo::mcp::list_full(conn, &state.crypto))?;
+    let previously_applied = state.db.with_conn(repo::mcp::applied_targets)?;
+
+    let backup_root = backups_dir()?.join("mcp");
+    std::fs::create_dir_all(&backup_root)?;
+
+    let results =
+        apply_servers_to_targets(&settings, &servers, &previously_applied, requested, &backup_root);
 
     let desired = targets_with_enabled_servers(&servers);
     let merged = targets_to_record(&results, &desired);
@@ -380,17 +470,29 @@ pub fn scan_existing_mcp(
     let mut outcome = mcp_scan::scan_all(&settings);
 
     // 与库里已有记录比对，标出哪些已纳管过，避免界面重复提供「纳管」。
-    // 名称比较不区分大小写，与 save 的重名校验口径一致。
-    let existing = state.db.with_conn(|conn| repo::mcp::list(conn, &state.crypto))?;
-    let by_name: std::collections::HashMap<String, String> = existing
-        .into_iter()
-        .map(|server| (server.name.to_lowercase(), server.id))
-        .collect();
-    for entry in &mut outcome.entries {
-        entry.imported_id = by_name.get(&entry.name.to_lowercase()).cloned();
-    }
+    // 先按粗身份匹配（名字是每个客户端各自的局部属性，同一服务器可以叫两个名字），
+    // 身份未命中再按名字兜底（大小写不敏感，与 save 的重名校验口径一致）——
+    // 保住用户手工改过名、args 又有微调的既有条目不被显示成「未纳管」。
+    let existing = state.db.with_conn(|conn| repo::mcp::list_full(conn, &state.crypto))?;
+    mark_imported_entries(&mut outcome.entries, &existing);
 
     Ok(outcome)
+}
+
+/// 给扫描结果标注库内同一条目的 id（见 `scan_existing_mcp` 的两级匹配规则）。
+fn mark_imported_entries(
+    entries: &mut [crate::adapters::mcp_scan::ScannedMcp],
+    servers: &[McpServer],
+) {
+    for entry in entries.iter_mut() {
+        let identity = mcp_identity::coarse_identity(entry.kind, &entry.config);
+        let name = entry.name.to_lowercase();
+        entry.imported_id = servers
+            .iter()
+            .find(|server| mcp_identity::coarse_identity(server.kind, &server.config) == identity)
+            .or_else(|| servers.iter().find(|server| server.name.to_lowercase() == name))
+            .map(|server| server.id.clone());
+    }
 }
 
 /// 纳管定位符：前端只说明「哪个客户端的哪个键」，不承担传递配置内容的职责。
@@ -409,17 +511,79 @@ pub struct McpImportFailure {
     pub message: String,
 }
 
+/// 纳管时命中「库里已有同一粗身份的行」的结果项：只回定位符与已有行的 id/名字，
+/// **不含 config/env/headers**——已纳管就是已纳管，不替用户改已有行。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AlreadyImportedMcp {
+    pub target: crate::adapters::mcp_scan::ScanTarget,
+    pub key: String,
+    pub existing_id: String,
+    pub existing_name: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpImportResult {
     pub imported: Vec<McpServerSummary>,
     pub failed: Vec<McpImportFailure>,
+    /// 命中已有行粗身份、被跳过而未建行的条目（既有行为：`failed` 仍只表示真错误）。
+    pub already_imported: Vec<AlreadyImportedMcp>,
+}
+
+/// 单条纳管的两种归宿。`AlreadyImported` 不建任何行、不碰已有行。
+enum ImportOutcome {
+    Imported(McpServerSummary),
+    AlreadyImported(AlreadyImportedMcp),
+}
+
+fn summarize_server(server: &McpServer) -> McpServerSummary {
+    McpServerSummary {
+        id: server.id.clone(),
+        name: server.name.clone(),
+        kind: server.kind,
+        enabled: server.enabled,
+        targets: server.targets.clone(),
+        created_at: server.created_at,
+        updated_at: server.updated_at,
+        current_version: server.current_version.clone(),
+        latest_version: server.latest_version.clone(),
+        last_update_check_at: server.last_update_check_at,
+    }
+}
+
+/// 纳管一条已定位的条目：粗身份命中已有行 → 只回指那条行，**建行与已有行都不动**
+/// （不改名、不改 targets、不刷新 updated_at）——用户要的是别建重复行，不是替他做决定。
+/// 未命中才走 `repo::mcp::save` 建行。
+fn import_entry(
+    conn: &Connection,
+    crypto: &Crypto,
+    target: crate::adapters::mcp_scan::ScanTarget,
+    key: &str,
+    input: McpServerInput,
+) -> AppResult<ImportOutcome> {
+    let identity = mcp_identity::coarse_identity(input.kind, &input.config);
+    let existing = repo::mcp::list_full(conn, crypto)?;
+    if let Some(hit) = existing
+        .iter()
+        .find(|server| mcp_identity::coarse_identity(server.kind, &server.config) == identity)
+    {
+        return Ok(ImportOutcome::AlreadyImported(AlreadyImportedMcp {
+            target,
+            key: key.to_string(),
+            existing_id: hit.id.clone(),
+            existing_name: hit.name.clone(),
+        }));
+    }
+    let server = repo::mcp::save(conn, crypto, input)?;
+    Ok(ImportOutcome::Imported(summarize_server(&server)))
 }
 
 /// 纳管：把扫描到的条目导入数据库，env/headers 走既有加密存储。
 ///
 /// 密钥值由后端按定位符直接读盘取得，**不经过前端**。导入本身不修改来源客户端文件——
 /// 接管（删除等价的手工条目）发生在之后的「应用」时，且有指纹校验兜底。
+/// 命中已有行粗身份的条目进 `already_imported`（不建行、不动已有行），真错误才进 `failed`。
 /// `(async)`：逐条读盘并做加密入库，属于纯磁盘工作。
 #[tauri::command(async)]
 pub fn import_scanned_mcp(
@@ -431,29 +595,20 @@ pub fn import_scanned_mcp(
     let settings: AppSettings = state.db.with_conn(repo::settings::get_settings)?;
     let mut imported = Vec::new();
     let mut failed = Vec::new();
+    let mut already_imported = Vec::new();
 
     for locator in locators {
-        let saved = mcp_scan::load_entry_for_import(locator.target, &locator.key, &settings)
+        let outcome = mcp_scan::load_entry_for_import(locator.target, &locator.key, &settings)
             .and_then(|input| {
-                state
-                    .db
-                    .with_conn(|conn| repo::mcp::save(conn, &state.crypto, input))
+                state.db.with_conn(|conn| {
+                    import_entry(conn, &state.crypto, locator.target, &locator.key, input)
+                })
             });
 
-        match saved {
+        match outcome {
             // 只回元数据：save 的返回值含 env/headers 明文，不该回传前端。
-            Ok(server) => imported.push(McpServerSummary {
-                id: server.id,
-                name: server.name,
-                kind: server.kind,
-                enabled: server.enabled,
-                targets: server.targets,
-                created_at: server.created_at,
-                updated_at: server.updated_at,
-                current_version: server.current_version,
-                latest_version: server.latest_version,
-                last_update_check_at: server.last_update_check_at,
-            }),
+            Ok(ImportOutcome::Imported(summary)) => imported.push(summary),
+            Ok(ImportOutcome::AlreadyImported(existing)) => already_imported.push(existing),
             Err(error) => failed.push(McpImportFailure {
                 target: locator.target,
                 key: locator.key,
@@ -462,7 +617,11 @@ pub fn import_scanned_mcp(
         }
     }
 
-    Ok(McpImportResult { imported, failed })
+    Ok(McpImportResult {
+        imported,
+        failed,
+        already_imported,
+    })
 }
 
 #[cfg(test)]
@@ -589,5 +748,377 @@ mod tests {
             vec![TargetKind::Pi]
         );
         assert!(targets_with_enabled_servers(&[]).is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // 身份去重（M1）：纳管 / 保存 / 应用三处判定收紧的行为测试。
+    // ------------------------------------------------------------------
+
+    use crate::domain::McpKind;
+    use rusqlite::params;
+    use serde_json::{json, Value};
+    use std::fs;
+
+    fn db_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::apply_schema(&conn).unwrap();
+        conn
+    }
+
+    fn test_crypto() -> Crypto {
+        Crypto::from_key([9_u8; 32])
+    }
+
+    fn input_fixture(name: &str, config: Value, targets: Vec<TargetKind>) -> McpServerInput {
+        McpServerInput {
+            id: None,
+            name: name.to_string(),
+            kind: McpKind::Stdio,
+            enabled: true,
+            targets,
+            config,
+            env: json!({}),
+            headers: json!({}),
+        }
+    }
+
+    fn server_fixture(
+        name: &str,
+        config: Value,
+        targets: Vec<TargetKind>,
+        enabled: bool,
+    ) -> McpServer {
+        McpServer {
+            id: format!("id-{name}"),
+            name: name.to_string(),
+            kind: McpKind::Stdio,
+            enabled,
+            targets,
+            config,
+            env: json!({}),
+            headers: json!({}),
+            created_at: 0,
+            updated_at: 0,
+            current_version: None,
+            latest_version: None,
+            last_update_check_at: None,
+        }
+    }
+
+    fn scanned_fixture(key: &str, config: Value) -> crate::adapters::mcp_scan::ScannedMcp {
+        crate::adapters::mcp_scan::ScannedMcp {
+            target: crate::adapters::mcp_scan::ScanTarget::ClaudeCode,
+            key: key.to_string(),
+            name: key.to_string(),
+            managed: false,
+            kind: McpKind::Stdio,
+            config,
+            env_keys: Vec::new(),
+            header_keys: Vec::new(),
+            imported_id: None,
+        }
+    }
+
+    /// 同一服务器在两个客户端里的实测形状（本机 sequential-thinking / sequentialthinking）。
+    fn same_server_two_shapes() -> (Value, Value) {
+        (
+            json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]}),
+            json!({
+                "command": "D:\\Program Files\\nodejs\\npx.cmd",
+                "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"],
+                "type": "stdio",
+                "enabled": true,
+                "timeoutMs": 30_000,
+            }),
+        )
+    }
+
+    #[test]
+    fn scan_marks_imported_id_by_identity_first_then_name() {
+        let (bare, absolute) = same_server_two_shapes();
+        let alpha = server_fixture("sequential-thinking", bare, vec![], true);
+        let ssh = server_fixture(
+            "ssh",
+            json!({"command": "npx", "args": ["-y", "ssh-mcp", "--host", "h"]}),
+            vec![],
+            true,
+        );
+        let servers = vec![alpha.clone(), ssh.clone()];
+
+        let mut entries = vec![
+            // 键名完全不同，但粗身份命中 → 标成已纳管（这正是旧版漏掉、产生重复行的场景）。
+            scanned_fixture("sequentialthinking", absolute),
+            // 身份不命中（用户纳管后又改过 args），键名大小写不敏感地命中 → 名字兜底。
+            scanned_fixture(
+                "SSH",
+                json!({"command": "npx", "args": ["-y", "ssh-mcp", "--host", "changed"]}),
+            ),
+            // 两者都不命中 → 保持未纳管。
+            scanned_fixture("brand-new", json!({"command": "uvx", "args": ["zzz"]})),
+        ];
+
+        mark_imported_entries(&mut entries, &servers);
+
+        assert_eq!(entries[0].imported_id.as_deref(), Some(alpha.id.as_str()));
+        assert_eq!(entries[1].imported_id.as_deref(), Some(ssh.id.as_str()));
+        assert_eq!(entries[2].imported_id, None);
+    }
+
+    #[test]
+    fn import_hitting_coarse_identity_creates_no_row_and_leaves_existing_untouched() {
+        let conn = db_conn();
+        let crypto = test_crypto();
+        let (bare, absolute) = same_server_two_shapes();
+        let existing =
+            repo::mcp::save(&conn, &crypto, input_fixture("existing", bare, vec![TargetKind::ClaudeCode]))
+                .unwrap();
+
+        type Row = (String, String, String, i64, String, Option<String>);
+        let snapshot = |conn: &Connection| -> Row {
+            conn.query_row(
+                "SELECT id, name, targets_json, updated_at, config_json, secrets_encrypted \
+                 FROM mcp_servers WHERE id = ?1",
+                params![existing.id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            )
+            .unwrap()
+        };
+        let before = snapshot(&conn);
+
+        // 从 Codex 侧再纳管一次同一服务器：不同键名、绝对路径 command、带私有字段、还带密钥值。
+        let mut dup = input_fixture("existing-copy", absolute, vec![]);
+        dup.env = json!({"TOKEN": "PLACEHOLDER_SECRET"});
+        let outcome =
+            import_entry(&conn, &crypto, crate::adapters::mcp_scan::ScanTarget::Codex, "existing-copy", dup)
+                .unwrap();
+
+        match outcome {
+            ImportOutcome::AlreadyImported(already) => {
+                assert_eq!(already.existing_id, existing.id);
+                assert_eq!(already.existing_name, "existing");
+                // 只回定位符与已有行的 id/名字：不携带任何 config/env/headers。
+                let serialized = serde_json::to_value(&already).unwrap();
+                assert_eq!(serialized["existingId"], existing.id.as_str());
+                assert_eq!(serialized["existingName"], "existing");
+                let text = serialized.to_string();
+                assert!(!text.contains("PLACEHOLDER_SECRET"), "secrets must not leave the backend");
+                assert!(!text.contains("sequential-thinking"), "config must not be returned");
+                assert!(serialized.get("config").is_none());
+                assert!(serialized.get("env").is_none());
+            }
+            ImportOutcome::Imported(_) => panic!("同一粗身份不得建行"),
+        }
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1, "命中粗身份时不得新建行");
+        assert_eq!(snapshot(&conn), before, "已有行必须逐字节原样：name/targets/updated_at/config 都不动");
+    }
+
+    #[test]
+    fn import_with_new_identity_creates_row() {
+        let conn = db_conn();
+        let crypto = test_crypto();
+        repo::mcp::save(&conn, &crypto, input_fixture("other", json!({"command": "uvx", "args": ["a"]}), vec![]))
+            .unwrap();
+
+        let outcome = import_entry(
+            &conn,
+            &crypto,
+            crate::adapters::mcp_scan::ScanTarget::Pi,
+            "fresh",
+            input_fixture("fresh", json!({"command": "npx", "args": ["-y", "fresh-mcp"]}), vec![]),
+        )
+        .unwrap();
+
+        match outcome {
+            ImportOutcome::Imported(summary) => {
+                assert_eq!(summary.name, "fresh");
+                assert!(summary.targets.is_empty(), "目标选择仍归用户");
+            }
+            ImportOutcome::AlreadyImported(_) => panic!("不同身份必须建行"),
+        }
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn import_batch_of_two_same_identity_creates_exactly_one_row() {
+        // 「全部纳管」一次勾了同一服务器的两个客户端条目：第二条必须看到第一条刚建的行。
+        // 这就是 import_entry 每条都重读 list_full 的原因——把读表提到循环外会漏判、建出重复行。
+        let conn = db_conn();
+        let crypto = test_crypto();
+        let (bare, absolute) = same_server_two_shapes();
+
+        let first = import_entry(
+            &conn,
+            &crypto,
+            crate::adapters::mcp_scan::ScanTarget::Codex,
+            "sequential-thinking",
+            input_fixture("sequential-thinking", bare, vec![]),
+        )
+        .unwrap();
+        let created_id = match first {
+            ImportOutcome::Imported(summary) => summary.id,
+            ImportOutcome::AlreadyImported(_) => panic!("空库里第一条应当建行"),
+        };
+
+        let second = import_entry(
+            &conn,
+            &crypto,
+            crate::adapters::mcp_scan::ScanTarget::ClaudeCode,
+            "sequentialthinking",
+            input_fixture("sequentialthinking", absolute, vec![]),
+        )
+        .unwrap();
+        match second {
+            ImportOutcome::AlreadyImported(already) => {
+                assert_eq!(already.existing_id, created_id, "必须指回同批次刚建的那一行");
+            }
+            ImportOutcome::Imported(_) => panic!("同批次内也不得建出第二行"),
+        }
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn save_guard_blocks_other_rows_identity_and_allows_self_edit() {
+        let (bare, absolute) = same_server_two_shapes();
+        let alpha = server_fixture("alpha", bare, vec![], true);
+        let beta = server_fixture("beta", json!({"command": "uvx", "args": ["y"]}), vec![], true);
+        let servers = vec![alpha.clone(), beta.clone()];
+
+        // 新增行命中他行粗身份 → validation_failed 且信息点名冲突条目。
+        let new = input_fixture("gamma", absolute.clone(), vec![]);
+        let error = guard_identity_collision(&servers, &new).unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        assert!(error.to_string().contains("alpha"), "{error}");
+
+        // 按 id 编辑自身（库里还留着存量重复也要能改）→ 放行。
+        let mut self_edit = input_fixture("gamma", absolute, vec![]);
+        self_edit.id = Some(alpha.id.clone());
+        assert!(guard_identity_collision(&servers, &self_edit).is_ok());
+
+        // 全新身份 → 放行。
+        let fresh = input_fixture("delta", json!({"command": "uvx", "args": ["z"]}), vec![]);
+        assert!(guard_identity_collision(&servers, &fresh).is_ok());
+
+        // 编辑成与「另一行」同身份 → 同样拒绝（不允许靠编辑制造重复）。
+        let mut cross_edit = self_edit;
+        cross_edit.id = Some(alpha.id.clone());
+        cross_edit.config = beta.config.clone();
+        let error = guard_identity_collision(&servers, &cross_edit).unwrap_err();
+        assert!(error.to_string().contains("beta"), "{error}");
+    }
+
+    #[test]
+    fn identity_conflicts_only_groups_enabled_duplicates() {
+        let (bare, absolute) = same_server_two_shapes();
+        let a = server_fixture("a", bare.clone(), vec![], true);
+        let mut disabled_twin = server_fixture("b", absolute.clone(), vec![], false);
+        assert_eq!(identity_conflicts(&[a.clone(), disabled_twin.clone()]), Vec::<Vec<String>>::new());
+
+        disabled_twin.enabled = true;
+        assert_eq!(
+            identity_conflicts(&[a.clone(), disabled_twin.clone()]),
+            vec![vec!["a".to_string(), "b".to_string()]]
+        );
+
+        // 不同身份不构成组。
+        let other = server_fixture("c", json!({"command": "uvx", "args": ["x"]}), vec![], true);
+        assert_eq!(identity_conflicts(&[a, other]), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
+    fn apply_refuses_duplicate_identity_target_and_keeps_file_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let claude_dir = dir.path().join("claude");
+        let codex_dir = dir.path().join("codex");
+        let backup = dir.path().join("backup");
+        fs::create_dir_all(&claude_dir).unwrap();
+        fs::create_dir_all(&backup).unwrap();
+        let claude_path = claude_dir.join(".claude.json");
+        let original = r#"{"mcpServers":{"user-server":{"command":"user-cmd"}}}"#;
+        fs::write(&claude_path, original).unwrap();
+
+        let settings = AppSettings {
+            claude_home_override: Some(claude_dir.to_string_lossy().to_string()),
+            codex_home_override: Some(codex_dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+
+        // 同一服务器的两行（本机 sequential-thinking / sequentialthinking 的实测形状）都指向
+        // Claude；第三行身份独立、指向 Codex，用来验证「其余目标照常应用」。
+        let (bare, absolute) = same_server_two_shapes();
+        let a = server_fixture("sequential-thinking", bare, vec![TargetKind::ClaudeCode], true);
+        let b = server_fixture("sequentialthinking", absolute, vec![TargetKind::ClaudeCode], true);
+        let c = server_fixture(
+            "tavily",
+            json!({"command": "npx", "args": ["-y", "tavily-mcp"]}),
+            vec![TargetKind::Codex],
+            true,
+        );
+
+        let results = apply_servers_to_targets(
+            &settings,
+            &[a, b, c],
+            &[],
+            &[TargetKind::ClaudeCode, TargetKind::Codex],
+            &backup,
+        );
+
+        let claude = results
+            .iter()
+            .find(|result| result.target == TargetKind::ClaudeCode)
+            .expect("冲突目标必须逐条上报");
+        assert!(!claude.ok, "同粗身份的两条不得写入");
+        assert!(
+            claude.message.contains("sequential-thinking")
+                && claude.message.contains("sequentialthinking"),
+            "失败信息必须点名冲突的两条: {}",
+            claude.message
+        );
+        assert!(claude.backup_paths.is_empty());
+        assert_eq!(
+            fs::read_to_string(&claude_path).unwrap(),
+            original,
+            "跳过时不得写盘：既没有 xiaobai_sequential-thinking 也没有 xiaobai_sequentialthinking"
+        );
+        assert!(!original.contains("xiaobai_"));
+
+        let codex = results
+            .iter()
+            .find(|result| result.target == TargetKind::Codex)
+            .expect("其余目标必须继续应用");
+        assert!(codex.ok, "其余目标不受影响: {}", codex.message);
+        let text = fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+        assert!(text.contains("xiaobai_tavily"), "{text}");
+        assert!(!text.contains("xiaobai_sequential"), "冲突两条哪儿都不写: {text}");
+    }
+
+    #[test]
+    fn apply_without_conflicts_writes_all_targets() {
+        // 回归：没有身份冲突时行为与改动前一致（含「上次应用过的目标」清理并集语义）。
+        let dir = tempfile::tempdir().unwrap();
+        let pi_dir = dir.path().join("pi");
+        let backup = dir.path().join("backup");
+        fs::create_dir_all(&backup).unwrap();
+        let settings = AppSettings {
+            pi_agent_dir_override: Some(pi_dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+
+        let a = server_fixture("solo", json!({"command": "npx", "args": ["-y", "solo"]}), vec![TargetKind::Pi], true);
+        let results = apply_servers_to_targets(&settings, &[a], &[], &[TargetKind::Pi], &backup);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].ok, "{}", results[0].message);
+        let text = fs::read_to_string(pi_dir.join("mcp.json")).unwrap();
+        assert!(text.contains("xiaobai_solo"), "{text}");
     }
 }

@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/09-19-mcp-identity-dedup/research/diagnosis.md", "reason": "根因链、本机实测证据与全部边界事实"}
+{"file": "AGENTS.md", "reason": "MCP 统一管控、托管前缀与兼容红线"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "整库替换与逻辑指纹版本约束：为何身份不得落库成列"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "entry_fingerprint 与 canonical 口径收敛，避免两套身份算法"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "invoke 契约跨 Rust/TS/types/mock 四层同步"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Alert 横幅与 Modal 表单既有约定"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "新命令返回值的 TS 类型契约"}

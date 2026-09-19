@@ -90,6 +90,14 @@ fn strip_entry(entry: &Value) -> (Value, Value, Value) {
 /// 只在等价时才敢用托管条目替换它——否则同一个 MCP 会在客户端里存在两份、被加载两遍。
 /// 不等价说明用户在我们纳管之后又改过那条配置：那种情况必须报错让用户决定，
 /// 绝不能拿库里的旧版本覆盖用户的新改动。
+///
+/// 这里的口径**刻意比 [`crate::adapters::mcp_identity`] 更窄**，两者不是同一件事，不要合并：
+/// 只忽略 `type` / `transport` 这类显式传输标记（见 [`strip_entry`]），其余字段逐一严格比对。
+/// 因为这条判断的后果是**删掉用户文件里的一条配置**：`enabled: false`（用户在客户端里
+/// 主动停用）与 `timeoutMs`（用户调过的启动超时）都是有意义的差异，一旦当成噪声剔除，
+/// 就会把用户禁用的服务悄悄启用、把用户改过的超时改回库里的值。
+/// 而 [`crate::adapters::mcp_identity::coarse_identity`] 只回答「是不是同一个服务器」，
+/// 后果是不新建重复行，放宽不会丢数据，所以它才需要吞掉这些客户端私有字段。
 fn untracked_matches_record(entry: &Value, server: &McpServer) -> bool {
     let (actual_config, actual_env, actual_headers) = strip_entry(entry);
     let (expected_config, expected_env, expected_headers) = strip_entry(&server_entry(server));
@@ -1042,6 +1050,37 @@ args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
         let root: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["mcpServers"].as_object().unwrap().len(), 1);
         assert!(root["mcpServers"]["xiaobai_demo"].is_object());
+    }
+
+    #[test]
+    fn takeover_refuses_when_user_disabled_or_retuned_entry() {
+        // 接管口径必须比身份口径窄：`enabled: false` 是用户在客户端里主动停用的，
+        // `timeoutMs` 是用户调过的启动超时。若把它们当客户端噪声忽略，接管就会删掉用户那条、
+        // 写入库内版本，等于悄悄把用户禁用的服务重新启用。这类差异必须报错并原样保留文件。
+        for (label, extra) in [
+            ("disabled", json!({ "enabled": false })),
+            ("retuned", json!({ "timeoutMs": 30_000 })),
+        ] {
+            let (dir, backup) = temp_backup_root();
+            let path = dir.path().join(".claude.json");
+            let mut entry = untracked_demo_json();
+            for (key, value) in extra.as_object().unwrap() {
+                entry[key] = value.clone();
+            }
+            let original = json!({ "mcpServers": { "demo": entry } });
+            fs::write(&path, serde_json::to_string_pretty(&original).unwrap()).unwrap();
+
+            let error = apply_to_claude(
+                &[server("demo", true)],
+                Some(dir.path().to_str().unwrap()),
+                &backup,
+            )
+            .unwrap_err();
+
+            assert!(error.to_string().contains("demo"), "{label}: {error}");
+            let after: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(after, original, "{label}: 拒绝时必须原样保留文件");
+        }
     }
 
     #[test]

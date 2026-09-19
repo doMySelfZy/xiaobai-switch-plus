@@ -4,6 +4,7 @@ pub mod atomic;
 pub mod claude_code;
 pub mod codex;
 pub mod mcp;
+pub mod mcp_identity;
 pub mod mcp_scan;
 pub mod mcp_update;
 pub mod mcp_version;
