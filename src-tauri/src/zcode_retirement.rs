@@ -227,7 +227,7 @@ fn contains_retired_name(text: &str) -> bool {
 }
 
 fn is_retired_name(value: &str) -> bool {
-    RETIRED_JSON_NAMES.iter().any(|name| *name == value)
+    RETIRED_JSON_NAMES.contains(&value)
 }
 
 /// 从 JSON 里剔除退役目标的字符串数组元素，返回是否真的改动了。
@@ -442,6 +442,7 @@ fn delete_retired_rows(conn: &Connection, table: &'static str) -> AppResult<usiz
 /// 2. `replace_existing = false` —— 快照已存在就不重写，要留的是**清洗前**那一份，不是最近一份；
 /// 3. `require_master_key = false` —— 缺 `master.key` 只 warn，不报错：清洗推迟到下次启动无所谓，
 ///    让 `Db::open` 失败会让用户连应用都打不开。
+///
 /// 另：内存库/临时连接（备份校验等）不做快照，与 `maybe_backup(Auto)` 同口径。
 fn backup_before_first_write(conn: &Connection) -> AppResult<()> {
     let path = conn.path().map(Path::new);

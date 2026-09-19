@@ -53,6 +53,7 @@ cd src-tauri && cargo test                    # 592 passed / 0 failed / 2 ignore
 | `strip_block` 缺 END 时从 `Err` 改成截断 | `malformed_targets_are_skipped_and_left_untouched` |
 
 **本机工具链缺口（待确认，勿当已验证）**：`cargo clippy` 未安装（`rustup component add clippy` 未执行，装系统依赖须先问用户）。因此阶段 3 的 `cargo clippy -- -D warnings` 与 Gate 2 的「零新增警告」只能用 `cargo check --lib --tests` 的 rustc 警告近似核对 —— 已确认本次改动的 7 个文件零 rustc 警告，但这不等于 clippy 干净。
+> 该缺口已在收尾时经用户批准补装并核完，实测结论见阶段 5 末「工具链核查」；上面这句保留为当时的事实，不要引用为当前状态。
 
 
 ## 阶段 2：U2 目标模型收缩 ✅ 已完成（Gate 2 通过）
@@ -127,7 +128,13 @@ pnpm test:run     # 432 passed / 0 failed，55 / 57 文件通过
 - [ ] 5.5 **真机 GUI 冒烟未做** —— 没有跑起打包后的应用去点界面。等价自动化覆盖：v0.1.5 形状夹具上的 `ensure_in_db`（27 例，含设置 blob / 三个 targets 数组 / 两类绑定行 / 列置空）、tempdir 假 `~/.zcode` 四类落点清理（含 BOM、块外内容、畸形标记）、托盘文案与线数断言。剩余缺口只在 `lib.rs::setup` 的真实启动路径。**不以此声称 5.5 通过。**
 - [x] 5.6 全量：`cargo test` 579/0/2、`pnpm typecheck` 零错误、`pnpm test:run` 432 passed。
 
-**工具链缺口汇总（勿当已验证）**：本机 `stable-x86_64-pc-windows-msvc` 未安装 `clippy` 与 `rustfmt`，且约定不静默装系统依赖。因此「零新增警告」只由 `cargo check --lib --tests` 的 rustc 警告逐条与 HEAD 比对来保证（lib 目标本身有 54 条既有/平台门控警告，见 Gate 2 的口径纠正），不等于 clippy 干净；`cargo fmt --check` 在 rustfmt 缺失时报告「0 diffs」属于假阴性，不作为证据。
+**工具链核查（收尾时经用户批准 `rustup component add clippy rustfmt`：clippy 0.1.98 / rustfmt 1.9.0-stable）**：两项都按「只算本任务引入的增量」口径做，不做全仓清洗。
+
+- **clippy —— 门禁已真正闭合**。`cargo clippy --offline --lib --tests --message-format=short` → 0 error、131 条唯一警告（HEAD 本身就有 ~122 条：仓库从未跑过 clippy）。把 `git diff -U0 f54aca1^..f54aca1` 的新增行区间与警告的 `file:line` 求交集，**首查命中 2 条，都在新增文件里**：`zcode_retirement.rs:230` `manual_contains`（改 `RETIRED_JSON_NAMES.contains(&value)`）、`:445` `doc_lazy_continuation`（列表项后的续行前补一条空 `///`）。修完复跑交集 **0 命中**；既有 ~122 条按「不顺手重构」不动。
+  → 推论：**`cargo clippy -- -D warnings` 不能当本仓门禁**，它会在与本任务无关的既有码上红。原计划阶段 3 那一行按交集口径执行，不照字面跑。
+- **rustfmt —— 不是本仓约定，故不执行**。仓库无 `rustfmt.toml`（根与 `src-tauri` 均无），`.github/workflows/` 对 fmt / clippy / rustfmt **零命中**。实测 15 个被改 `.rs` 文件中 **10 个整体不合 rustfmt 默认**，仅 `lib.rs` 就有 795 行 rustfmt 想动，而它本次只新增 13 行 —— 跑 `cargo fmt` 会产出巨量无关清洗，违反范围红线。落在新增行上的 rustfmt 意见逐条抽检（`chain_width` 默认 60 触发链式换行、`max_width` 按 CJK 列宽计）均为默认口径差异，非风格退化。
+  > **方法学教训（已写进 `.trellis/spec/backend/index.md`「提交前机械检查」）**：`rustfmt --check` 的输出头是它自己的 `Diff in <path>:<line>:`，**不是** unified diff 的 `@@ -a,b +c,d @@`。用 `@@` 去解析必然得到「0 命中」的**假阴性** —— 本仓 rustfmt 大面积不合默认，任何此类交集脚本都要先打印中间量、确认解析到了行号再信结论。第一版脚本就中了这一枪。
+- 两处 clippy 修复后复跑全量：`cargo test` **579 passed / 0 failed / 2 ignored**，与 5.6 一致，无回归。
 
 **`trellis-check` 复核结论（独立子代理，6 项定向核查）**：跨层契约、静默死代码、兼容红线、守门测试是否放宽、i18n 孤儿与中英对称、前端可达入口 —— **6 项均无发现，零改动**。附带两条信息：① 上面那条 Gate 2「零警告」口径不成立，已纠正；② i18n 按**唯一键路径**统计为中英各 887 键且集合完全对称、代码引用零缺键（R6 原文的 894 是含重复块的逐行计数，两种口径都对，别混用）。
 

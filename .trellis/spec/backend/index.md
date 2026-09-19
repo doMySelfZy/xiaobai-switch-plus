@@ -39,4 +39,25 @@
    而 `as_str()` 落成 `"zcode"`，两种拼写在存量里都存在。全流程见
    [target-retirement](./target-retirement.md)。
 
+---
+
+## 提交前机械检查（实测口径，别按"CI 一定会拦"想当然）
+
+`.github/workflows/` 里**没有** `cargo fmt` / `cargo clippy` 步骤，仓库也没有 `rustfmt.toml`
+（根与 `src-tauri` 均无）→ 这两项都不是本仓门禁，也不存在"全仓 clean"这个基线。实测：
+`cargo clippy --offline --lib --tests` 有 ~122 条既有警告；被改的 15 个 `.rs` 里 10 个不合
+rustfmt 默认，仅 `lib.rs` 就有 795 行 rustfmt 想动，而它单次任务只新增 13 行。
+
+- **必跑**：`src-tauri` 下 `cargo test`（前端另见 `frontend/quality-guidelines.md`）。
+- **clippy 只用增量口径**：`cargo clippy --offline --lib --tests --message-format=short`，
+  把警告的 `file:line` 与本次 `git diff -U0` 的新增行区间求交集，**只修交集里的**。
+  禁止 `cargo clippy -- -D warnings`（会在无关既有码上红，逼你顺手重构）。
+- **禁止 `cargo fmt`**：没有配置文件时它是 rustfmt 默认风格，与本仓既有风格冲突，
+  跑一次产出的巨量无关 diff 会淹掉真实改动。新文件也不必单独"洗白"成 rustfmt 默认——
+  那会让一个文件与仓库其余部分风格分裂。
+- **增量核查脚本必须自证解析到了东西**：`rustfmt --check` 打的是它自己的
+  `Diff in <path>:<line>:` 头，**不是** `@@ -a,b +c,d @@`。按 unified diff 去解析会一行都
+  匹配不上，从而报告"0 处需要改"的**假阴性**——比不查更危险，因为它给出通过的样子。
+  这类脚本要打印中间量（"解析到 N 个文件的新增行"），确认 N 非零再信结论。
+
 **Language**: 文档用中文写；代码标识符、路径、命令保持原文。
