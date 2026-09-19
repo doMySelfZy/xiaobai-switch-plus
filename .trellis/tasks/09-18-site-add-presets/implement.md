@@ -40,7 +40,9 @@
 
 - [x] 14. 全量验证：`pnpm typecheck` 干净、`pnpm test:run` 435 passed（只有既存 shebang 两套红）、`src-tauri` 下 `cargo test` 567 passed / 0 failed。
 - [ ] 15. 真机确认（不能只靠单测声称完成）：装包后用真实魔搭令牌走一遍模板，确认余额显示与 401/无效令牌两种态；无凭据时明确说明未做真机验证。
-  - **未做**：本机没有可用的 ModelScope API Token，也没有跑起打包后的应用。Rust 侧只有本地 mock server 的响应形状；真实字段名、`success`/`code` 取值、限流行为都未经真机核对。
+  - **已核对（2026-09-19，上游契约这一半）**：用用户本机库内那把 `ms-9…6bd8`（长度 39，与 `site_api_keys.key_prefix` 一致）直连 `GET https://modelscope.cn/openapi/v1/magicubes/balance` → HTTP 200 / 226ms，`{"success":true,"request_id":"604bf8fb-86e4-4f1e-8582-04fd5ee4f759","data":{"total_balance":250,"available_balance":250,"frozen_amount":0}}`。真实字段名、`success` 取值、余额精度（整数也按 number 回）与 `magicube_quota` 的期望形状一致；官方规范 `1.1.0+master.20260916T070635Z` 里 servers 基址就是 `https://modelscope.cn/openapi/v1`，全库唯一余额端点就是这条，`available_balance` 官方描述「可用额度」。探测链无错。
+  - **仍未核对**：应用内那条链路（`build_client` → 探测 → `formatQuotaAmountLocalized` → 界面）没有真机走通，401/无效令牌态与限流行为也没有真实样本；模板入口本身未真机走一遍。另：用户报的「界面显示 0」在实测的上游响应里是 250，该 0 无法复盘（余额只在内存，DB 无 quota 表也无历史），跟进归 `09-19-modelscope-quota-display-clarity`。
+  - 证据采集方式：脚本只解密、只发一次请求、只打印响应 JSON，令牌未打印未落盘，脚本用后即删。
 - [x] 16. `.trellis/spec` 更新：`frontend/state-management.md` 补「服务商识别单一来源」契约；跨层条目补 `QuotaSource` / `unit` 加值的双侧同步要求。
   - 另加一条通用口径：额度金额只能经 `formatQuotaAmountLocalized` 出口（悬浮窗那处硬编码 `$` 就是这么来的）。
 

@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/09-18-site-add-presets/design.md", "reason": "第 5 节口径风险：魔粒禁用「剩余可用/额度」措辞的原始约定（第 69 行），本任务第 1 条就是补它漏掉的共用余额行"}
+{"file": ".trellis/tasks/09-18-site-add-presets/prd.md", "reason": "R3 魔搭余额探测的状态映射与「不显示 0 兜底」红线，改措辞时不得连带改掉"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "额度金额只能经 formatQuotaAmountLocalized 出口的契约，以及服务商识别单一来源"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "上游原串（MAGICUBE）不得直印进文案；source/endpoint 跨层可见性需要同步两侧"}
+{"file": ".trellis/tasks/09-18-site-quota-short-label/prd.md", "reason": "相邻任务边界：它只管「缺失原因短标签」并冻结 SiteQuotaRow 文案，本任务只改成功取到余额时的措辞，两者不得互相覆盖"}

@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/09-19-modelscope-quota-display-clarity/prd.md", "reason": "本任务的验收口径：R1 措辞分支、R2 来源可见、R3 零值不得被读成花光、R4 红线不动"}
+{"file": ".trellis/tasks/09-18-site-add-presets/design.md", "reason": "第 5 节措辞约束与状态映射表，检查时用来判定改动有没有越界改到探测语义"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 source/endpoint 是否两侧都同步、单位原串有没有漏进文案"}
