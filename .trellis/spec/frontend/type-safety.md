@@ -46,6 +46,33 @@ const TARGET_LABEL_KEYS: Record<TargetKind, string> = {
 };
 ```
 
+映射**函数**（返回 i18n key 那种）不要写默认兜底臂。兜底臂在联合收缩后会变成
+「未知值冒充某个合法值」——用户会把一个目标的数据看成另一个目标的。用穷尽守卫：
+
+```tsx
+export function targetKindLabelKey(kind: TargetKind): "apply.targetClaude" | … | "apply.targetPrime" {
+  if (kind === "claude_code") return "apply.targetClaude";
+  // …四个都返回
+  // 加新目标却忘加分支 → 这里编译失败；运行时真收到不认识的名字 → 原样回显裸 token
+  const unreachable: never = kind;
+  return unreachable;
+}
+```
+
+读取处配 `?? target` 兜底（`t(TARGET_LABEL_KEYS[target] ?? target)`），这样后端多回一个
+本版本不认识的目标时显示裸 token，而不是 `t(undefined)`。
+
+## 收缩联合时编译器照不到的三类点
+
+删掉一个枚举成员后，下面三类**不会报错**，必须人工核对（ZCode 退役实测）：
+
+1. **`export` 的死代码**：`noUnusedLocals` 不管 `export`。面板删了，配套的
+   `hydrateXxxForm` / `XXX_OPTIONS` / 解析函数会安静地留着。
+2. **可选字段**：`site.xxxApiType?: …` 没人读也没人写，类型与序列化都不报错。
+3. **i18n 键**：`t("apply.resultZCodeOk")` 这种字符串引用编译器看不见；键删了引用还在
+   （或反过来留一堆死键）。`src/i18n/locales/*.json` 顶层的 `rules` 与 `proxy` 各有
+   **两份重复块**（内容相同、后者覆盖前者），删键要在四个块里都删一次才真消失。
+
 ## 可选字段与「缺省即兼容」
 
 后端新增字段一律带 `#[serde(default)]`，前端类型标可选并在读取处给默认值——

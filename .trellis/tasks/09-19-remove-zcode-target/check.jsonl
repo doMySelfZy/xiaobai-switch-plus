@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/09-19-remove-zcode-target/prd.md", "reason": "逐条核对 AC1-AC11 是否可观测地达成，尤其 AC6 同步未破坏与 AC11 仓库根 .zcode/ 完好。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/design.md", "reason": "核对实现是否遵守 §4 不动清单与 §3.2 外部清理四条规则（畸形文件跳过、块外逐字节保留、空文件删除、无变化不写盘）。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/backend-data-compat.md", "reason": "复查读取路径四种失败模式是否都被收口：settings 硬失败、MCP 列表硬失败、agent_rules 静默清空、binding 误归因。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/backend-target-surface-and-redlines.md", "reason": "上文后半部分（因注入上限单独成文，必须与主体一起读）：§7 兼容红线逐项核查、手抄目标数组的顺序是否错位、魔数与计数断言、应删测试是否删净。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/frontend-surface.md", "reason": "复查 invoke 契约锁步表是否全部落实、i18n 中英键集合是否仍对称、隐式数量/顺序依赖扫描表中的 12 项。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/frontend-removal-worklist.md", "reason": "按文件逐项核销移除清单，重点复查编译器照不到的四处：TargetStatusCard 默认臂、hydrateApplyForm export 死代码、ProxyPage 缺失 ?? target 兜底、McpPage 的 as TargetKind 不变式。"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "检查是否误改 FINGERPRINT_TABLES、算法版本或 sites 列集合导致跨机指纹漂移。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端质量门禁口径，确认无裸 key 渲染、无未使用 import、文案不硬编码。"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "检查撤退清理器是否被诱导复制整套 adapters 逻辑，或与既有 atomic/backup/lock 工具重复造轮子。"}

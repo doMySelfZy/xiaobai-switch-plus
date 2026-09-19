@@ -51,6 +51,15 @@ These guides help you **ask the right questions before coding**.
 
 → Read [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md)
 
+### When to Think About Removing Something That Already Shipped
+
+- [ ] You're deleting a `TargetKind` / enum variant, a persisted column's read-write code, or an adapter
+- [ ] The value you're deleting can still exist in a user's SQLite DB or in files the app already wrote
+- [ ] A `match` you're shrinking has a `_` fallback (compiles fine, semantics change silently)
+- [ ] A label/key mapping function has a default arm that names one of the surviving values
+
+→ Read [backend/target-retirement.md](../backend/target-retirement.md)（清洗先于删枚举的完整顺序、两种拼写、列留值空、守门测试与变异验证清单）
+
 ### When Verifying AI Cross-Review Results
 
 - [ ] Reviewer claims "user input can be malicious" → Check the actual data source (internal manifest? user config? external API?)

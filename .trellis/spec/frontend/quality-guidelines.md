@@ -20,7 +20,12 @@ print('zh-only:',sorted(set(zh)-set(en))); print('en-only:',sorted(set(en)-set(z
 "
 ```
 
-- 别留「写了但没人用」的 key——它们会让下一个人以为某处已接入 i18n。
+- 别留「写了但没人用」的 key——它们会让下一个人以为某处已接入 i18n。删功能时**连带它的
+  文案一起删**（含键名里看不出来、只有正文提到的那种，例如列举目标清单的提示句）。
+  判断死键的办法：`grep -rn '"<ns>\.<key>"' src/` 零命中即死。
+- **删 key 要防重复块**：`zh-CN.json` / `en-US.json` 顶层的 `rules` 与 `proxy` 各有两份
+  内容相同的块（`JSON.parse` 后者覆盖前者）。只删一处等于没删。用「改前改后唯一键路径集合
+  做差」的脚本核对，别只靠肉眼数行。
 
 ## 测试命令
 
@@ -46,6 +51,8 @@ print('zh-only:',sorted(set(zh)-set(en))); print('en-only:',sorted(set(en)-set(z
 - 扫描不泄漏密钥值（改为保留 env 后用例立即失败并打印泄漏内容）
 - 悬浮窗定时刷新与卸载清理（去掉 setInterval 后用例失败）
 - 跨窗口设置变更订阅（取消订阅后用例失败）
+- ZCode 目标退役：未知目标绑定被跳过（改回 `unwrap_or(ClaudeCode)` 立即变红）、
+  清洗幂等（把备份挪到写盘之后立即变红）
 
 ### 用例写法要点
 

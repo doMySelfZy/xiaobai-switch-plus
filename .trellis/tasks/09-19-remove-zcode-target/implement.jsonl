@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/backend-data-compat.md", "reason": "后端存量数据与兼容影响调查主体：TargetKind 穷举点清单、三个互相独立的目标枚举、读取路径四种失败模式、~/.zcode 三处落点与最小残留路径设计。阶段 1-2 的主要依据。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/backend-target-surface-and-redlines.md", "reason": "上文的后半部分（因 32768 字节注入上限而拆分，必须与主体一起读）：目标清单硬编码扩散与手抄数组顺序、魔数与计数断言、站点预置模板冲突判定、应删/应新增的 Rust 测试、§7 兼容红线核查（本任务最关键约束）。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/frontend-surface.md", "reason": "前端移除面分析主体：三份并列联合、面板挂载方式、hydrateApplyForm 边界、stores 无持久化结论、i18n 22 键与复用文案、browserMock 与 Rust command 锁步表、隐式数量/顺序依赖扫描。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/research/frontend-removal-worklist.md", "reason": "前端按文件组织的可勾选移除清单（因注入上限单独成文）。这是兜住编译器照不到的四处静默点（ScanTarget 兜底臂、hydrateApplyForm export 死代码、TargetStatusCard 默认臂、browserMock 无 deny_unknown_fields）的唯一手段，必须全文注入。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/design.md", "reason": "U1-U4 分层与严格依赖顺序、撤退清洗的挂载点与幂等契约、不递增 SCHEMA_VERSION 与不 DROP 列的理由、回滚不可逆性说明。"}
+{"file": ".trellis/tasks/09-19-remove-zcode-target/prd.md", "reason": "R1-R9 需求与 AC1-AC11 验收标准，含 R4 兼容红线不动清单。"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "逻辑指纹与 FINGERPRINT_TABLES/算法版本约束的既有规范，决定 sites 列与表清单不能动。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务是典型跨层移除（DB/后端/命令/前端/i18n/mock），用其边界检查防止漏收口。"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Record<TargetKind,string> 穷举与 as TargetKind 隐式不变式的类型约束口径。"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "面板拆分与 SettingsPage 路径覆盖输入框等 UI 收口的既有规范。"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "stores 目标相关状态键与 DEFAULT AppSettings 超额属性检查的行为依据。"}
