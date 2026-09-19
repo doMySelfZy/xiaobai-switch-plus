@@ -7,14 +7,13 @@ import { useRulesStore } from "@/stores";
 import type { AgentRulesApplyResult, AgentRulesTargetResult } from "@/types/rules";
 import type { TargetKind } from "@/types/domain";
 
-const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime", "zcode"];
+const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
 
 const TARGET_LABEL_KEYS: Record<TargetKind, string> = {
   claude_code: "rules.targetClaudeCode",
   codex: "rules.targetCodex",
   pi: "rules.targetPi",
   prime: "rules.targetPrime",
-  zcode: "rules.targetZCode",
 };
 
 /** invoke 抛出的错误对象形状（与 McpPage 的用法一致）。 */

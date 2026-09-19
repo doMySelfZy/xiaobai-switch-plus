@@ -13,8 +13,8 @@ pub fn get_settings(state: State<'_, AppState>) -> AppResult<AppSettings> {
 
 /// 保存设置后按需剪枝：只有 `max_backup_copies` 真的变化时才扫描备份目录。
 ///
-/// 剪枝要遍历 5 个目标（claude_code / codex / pi / prime / zcode）的备份目录，
-/// 而设置页以前是每击键保存一次 —— 等于每敲一个数字就做 5 次全量目录扫描。
+/// 剪枝要遍历 4 个目标（claude_code / codex / pi / prime）的备份目录，
+/// 而设置页以前是每击键保存一次 —— 等于每敲一个数字就做 4 次全量目录扫描。
 /// `current` 与 `merged` 都经过 `repo::settings` 的 normalize（同一套 clamp），
 /// 两边相等就意味着用户没有改上限。
 ///

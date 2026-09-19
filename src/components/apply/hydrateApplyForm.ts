@@ -6,9 +6,7 @@ import type {
   LiveSummary,
   Site,
   SiteModel,
-  SiteProtocol,
   TargetLiveStatus,
-  ZCodeApiType,
 } from "@/types/domain";
 import {
   type CodexCapabilityFlags,
@@ -106,37 +104,6 @@ export interface PiFormDefaults {
 }
 
 export type PrimeFormDefaults = PiFormDefaults;
-
-const ZCODE_API_TYPES: readonly ZCodeApiType[] = [
-  "anthropic-messages",
-  "openai-responses",
-  "openai-chat-completions",
-];
-
-/** 站点未显式选择 ZCode 协议时的推断值（与后端 `ZCodeApiType::default_for` 一致）。 */
-export function inferZCodeApiType(protocol: SiteProtocol | undefined): ZCodeApiType {
-  return protocol === "anthropic" ? "anthropic-messages" : "openai-responses";
-}
-
-export function parseZCodeApiType(raw: string | null | undefined): ZCodeApiType | undefined {
-  if (!raw) return undefined;
-  return ZCODE_API_TYPES.find((value) => value === raw);
-}
-
-export interface ZCodeFormDefaults extends PiFormDefaults {
-  apiType: ZCodeApiType;
-}
-
-export function hydrateZCodeForm(
-  site: Site | null,
-  status: TargetLiveStatus | undefined,
-): ZCodeFormDefaults {
-  const base = hydratePiForm(site, status);
-  return {
-    ...base,
-    apiType: parseZCodeApiType(site?.zcodeApiType) ?? inferZCodeApiType(site?.protocol),
-  };
-}
 
 function appliedOnSite(site: Site | null, status: TargetLiveStatus | undefined): boolean {
   return Boolean(site && status?.appliedSiteId && status.appliedSiteId === site.id);

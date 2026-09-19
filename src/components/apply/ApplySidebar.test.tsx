@@ -56,18 +56,4 @@ describe("ApplySidebar", () => {
     fireEvent.click(prime);
     expect(useUIStore.getState().applyTab).toBe("prime");
   });
-
-  it("renders the ZCode tab with its icon and selects it", () => {
-    render(
-      <ConfigProvider>
-        <AntdApp>
-          <ApplySidebar />
-        </AntdApp>
-      </ConfigProvider>,
-    );
-    const zcode = screen.getByText("ZCode");
-    expect(zcode.closest("li")?.querySelector('[data-icon="zcode"]')).toBeTruthy();
-    fireEvent.click(zcode);
-    expect(useUIStore.getState().applyTab).toBe("zcode");
-  });
 });

@@ -66,11 +66,6 @@ fn normalized_base_for(
         TargetKind::ClaudeCode => true,
         TargetKind::Codex => false,
         TargetKind::Pi | TargetKind::Prime => site.protocol == SiteProtocol::Anthropic,
-        // ZCode 的 api 类型由用户在站点上单独选择，可能与站点 protocol 不一致。
-        TargetKind::ZCode => matches!(
-            crate::adapters::zcode::api_type_for(site),
-            crate::adapters::zcode::ZCodeApiType::AnthropicMessages
-        ),
     };
     Ok(if use_claude {
         preview.claude_base_url
@@ -244,7 +239,6 @@ mod tests {
             newapi_user_id: None,
             proxy_headers_encrypted: None,
             proxy_header_count: 0,
-            zcode_api_type: None,
         }
     }
 

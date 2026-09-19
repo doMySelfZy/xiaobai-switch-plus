@@ -20,29 +20,25 @@ export function ApplyFooter({ loading, disabled, target, onApply, onRestoreOffic
   const { modal, message } = App.useApp();
   const [backupOpen, setBackupOpen] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const isManagedProvider = target === "pi" || target === "prime" || target === "zcode";
+  const isManagedProvider = target === "pi" || target === "prime";
 
   const handleRestoreOfficial = () => {
     modal.confirm({
       centered: true,
       title:
-        target === "zcode"
-          ? t("apply.removeZCodeConfirm")
-          : target === "prime"
-            ? t("apply.removePrimeConfirm")
-            : target === "pi"
-              ? t("apply.removePiConfirm")
-              : t("apply.restoreOfficialConfirm"),
+        target === "prime"
+          ? t("apply.removePrimeConfirm")
+          : target === "pi"
+            ? t("apply.removePiConfirm")
+            : t("apply.restoreOfficialConfirm"),
       content:
         target === "claude_code"
           ? t("apply.restoreOfficialClaudeHint")
           : target === "codex"
             ? t("apply.restoreOfficialCodexHint")
-            : target === "zcode"
-              ? t("apply.removeZCodeHint")
-              : target === "prime"
-                ? t("apply.removePrimeHint")
-                : t("apply.removePiHint"),
+            : target === "prime"
+              ? t("apply.removePrimeHint")
+              : t("apply.removePiHint"),
       okText: isManagedProvider ? t("apply.removePiOk") : t("apply.restoreOfficialOk"),
       cancelText: t("common.cancel"),
       okButtonProps: { danger: true, loading: restoring },
@@ -60,11 +56,9 @@ export function ApplyFooter({ loading, disabled, target, onApply, onRestoreOffic
                     ? t("apply.restoreOfficialClaudeOk")
                     : target === "codex"
                       ? t("apply.restoreOfficialCodexOk")
-                      : target === "zcode"
-                        ? t("apply.removeZCodeDone")
-                        : target === "prime"
-                          ? t("apply.removePrimeDone")
-                          : t("apply.removePiDone")}
+                      : target === "prime"
+                        ? t("apply.removePrimeDone")
+                        : t("apply.removePiDone")}
                 </div>
                 <div className="mt-2">{t("apply.restartHint")}</div>
               </div>

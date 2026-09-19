@@ -24,13 +24,13 @@ export function applyResultBodyKey(
   | "apply.resultClaudeOk"
   | "apply.resultCodexOk"
   | "apply.resultPiOk"
-  | "apply.resultPrimeOk"
-  | "apply.resultZCodeOk" {
+  | "apply.resultPrimeOk" {
   if (target === "claude_code") return "apply.resultClaudeOk";
   if (target === "codex") return "apply.resultCodexOk";
   if (target === "prime") return "apply.resultPrimeOk";
-  if (target === "zcode") return "apply.resultZCodeOk";
-  return "apply.resultPiOk";
+  if (target === "pi") return "apply.resultPiOk";
+  const unreachable: never = target;
+  return unreachable;
 }
 
 export function showApplyOutcome(

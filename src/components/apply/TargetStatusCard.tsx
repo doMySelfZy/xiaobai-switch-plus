@@ -293,13 +293,16 @@ export function targetKindLabelKey(
   | "apply.targetClaude"
   | "apply.targetCodex"
   | "apply.targetPi"
-  | "apply.targetPrime"
-  | "apply.targetZCode" {
+  | "apply.targetPrime" {
   if (kind === "claude_code") return "apply.targetClaude";
   if (kind === "codex") return "apply.targetCodex";
   if (kind === "pi") return "apply.targetPi";
   if (kind === "prime") return "apply.targetPrime";
-  return "apply.targetZCode";
+  // 穷尽性检查：四个目标都在上面返回了。将来加新目标却忘了加分支，这里编译失败。
+  // 真在运行时拿到本版本不认识的名字（旧对端推来的退役目标残留）时原样回显裸 token，
+  // 也不能冒充某个存活目标 —— 那会让用户把别的目标的数据看成这个目标的。
+  const unreachable: never = kind;
+  return unreachable;
 }
 
 export function statusFor(

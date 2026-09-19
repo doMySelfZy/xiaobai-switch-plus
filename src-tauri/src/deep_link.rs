@@ -187,8 +187,6 @@ pub fn import_site_from_deep_link_conn(
             newapi_access_token: None,
             newapi_user_id: None,
             proxy_headers: None,
-            // 深链导入不带 ZCode 协议选择，等用户在站点里显式设置。
-            zcode_api_type: None,
         },
     )?;
 

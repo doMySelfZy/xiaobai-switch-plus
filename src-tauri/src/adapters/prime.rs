@@ -1021,7 +1021,6 @@ mod tests {
             newapi_user_id: None,
             proxy_headers_encrypted: None,
             proxy_header_count: 0,
-            zcode_api_type: None,
         }
     }
 

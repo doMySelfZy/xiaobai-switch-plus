@@ -566,46 +566,6 @@ pub fn resolve_prime_agent_dir(override_path: Option<&str>) -> AppResult<PathBuf
     default_prime_agent_dir()
 }
 
-/// ZCode 配置根目录：provider 在 `v2/`、MCP 在 `cli/`。
-pub fn default_zcode_home() -> AppResult<PathBuf> {
-    if let Ok(v) = std::env::var("ZCODE_HOME") {
-        if !v.trim().is_empty() {
-            return Ok(PathBuf::from(v));
-        }
-    }
-    Ok(home_dir()?.join(".zcode"))
-}
-
-pub fn resolve_zcode_home(override_path: Option<&str>) -> AppResult<PathBuf> {
-    if let Some(p) = override_path {
-        if !p.trim().is_empty() {
-            return Ok(PathBuf::from(p));
-        }
-    }
-    default_zcode_home()
-}
-
-/// ZCode 的供应商主配置（provider 定义 + 模型）。
-pub fn zcode_provider_path(zcode_home_override: Option<&str>) -> AppResult<PathBuf> {
-    Ok(resolve_zcode_home(zcode_home_override)?
-        .join("v2")
-        .join("config.json"))
-}
-
-/// ZCode 的供应商规则（顺序、api 类型、模型规则）——与上面的文件成对使用。
-pub fn zcode_provider_config_path(zcode_home_override: Option<&str>) -> AppResult<PathBuf> {
-    Ok(resolve_zcode_home(zcode_home_override)?
-        .join("v2")
-        .join("provider_config.json"))
-}
-
-/// ZCode 的 MCP 配置。
-pub fn zcode_mcp_path(zcode_home_override: Option<&str>) -> AppResult<PathBuf> {
-    Ok(resolve_zcode_home(zcode_home_override)?
-        .join("cli")
-        .join("config.json"))
-}
-
 pub fn app_paths_dto() -> AppResult<AppPaths> {
     let dir = app_dir()?;
     Ok(AppPaths {

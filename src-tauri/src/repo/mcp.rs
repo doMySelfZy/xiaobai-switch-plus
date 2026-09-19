@@ -217,7 +217,7 @@ pub fn delete(conn: &Connection, id: &str) -> AppResult<()> {
 
 pub fn applied_targets(conn: &Connection) -> AppResult<Vec<crate::domain::TargetKind>> {
     match sync_meta::get_meta(conn, APPLIED_TARGETS_KEY)? {
-        Some(raw) => Ok(serde_json::from_str(&raw).unwrap_or_default()),
+        Some(raw) => Ok(crate::domain::parse_persisted_targets(&raw, APPLIED_TARGETS_KEY)),
         None => Ok(Vec::new()),
     }
 }

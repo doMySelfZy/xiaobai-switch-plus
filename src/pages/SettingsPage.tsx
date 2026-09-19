@@ -474,20 +474,17 @@ function PathsSection() {
   const [codex, setCodex] = useState(settings.codexHomeOverride ?? "");
   const [pi, setPi] = useState(settings.piAgentDirOverride ?? "");
   const [prime, setPrime] = useState(settings.primeAgentDirOverride ?? "");
-  const [zcode, setZCode] = useState(settings.zcodeHomeOverride ?? "");
 
   useEffect(() => {
     setClaude(settings.claudeHomeOverride ?? "");
     setCodex(settings.codexHomeOverride ?? "");
     setPi(settings.piAgentDirOverride ?? "");
     setPrime(settings.primeAgentDirOverride ?? "");
-    setZCode(settings.zcodeHomeOverride ?? "");
   }, [
     settings.claudeHomeOverride,
     settings.codexHomeOverride,
     settings.piAgentDirOverride,
     settings.primeAgentDirOverride,
-    settings.zcodeHomeOverride,
   ]);
 
   const onSave = async () => {
@@ -496,7 +493,6 @@ function PathsSection() {
       codexHomeOverride: codex.trim() || null,
       piAgentDirOverride: pi.trim() || null,
       primeAgentDirOverride: prime.trim() || null,
-      zcodeHomeOverride: zcode.trim() || null,
     });
     message.success(t("settings.pathsSaved"));
   };
@@ -529,15 +525,6 @@ function PathsSection() {
             placeholder={t("settings.primeAgentDirPlaceholder")}
           />
           <div className="mt-1 text-xs opacity-50">{t("settings.primeAgentDirHint")}</div>
-        </div>
-        <div className="mb-3">
-          <div className="mb-1 text-sm">{t("settings.zcodeHome")}</div>
-          <Input
-            value={zcode}
-            onChange={(event) => setZCode(event.target.value)}
-            placeholder={t("settings.zcodeHomePlaceholder")}
-          />
-          <div className="mt-1 text-xs opacity-50">{t("settings.zcodeHomeHint")}</div>
         </div>
         <div className="mb-3">
           <div className="mb-1 text-sm">{t("settings.codexHome")}</div>

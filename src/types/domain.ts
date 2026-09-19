@@ -6,16 +6,10 @@ export type SiteProtocol = "openai_compatible" | "anthropic";
 /** Only affects Claude Code auth env key name. Codex ignores this. */
 export type ClaudeAuthKeyStyle = "anthropic_auth_token" | "anthropic_api_key";
 
-/**
- * ZCode provider 的连接协议。ZCode 把供应商拆成两份文件，`kind` 与 `api.type`
- * 必须配套；该值无法由 `SiteProtocol` 可靠推断，所以让用户显式选择。
- */
-export type ZCodeApiType = "anthropic-messages" | "openai-responses" | "openai-chat-completions";
-
-export type TargetKind = "claude_code" | "codex" | "pi" | "prime" | "zcode";
+export type TargetKind = "claude_code" | "codex" | "pi" | "prime";
 
 /**
- * 技能安装目标：只支持能放 SKILL.md 的四个客户端（ZCode 未接入技能）。
+ * 技能安装目标：只支持能放 SKILL.md 的四个客户端。
  * 与后端 `commands::skills::SkillTarget` 的 5 个取值（含 `agents`）保持一致。
  */
 export type SkillTarget = "agents" | "claude_code" | "codex" | "pi" | "prime";
@@ -125,8 +119,6 @@ export interface Site {
   newapiUserId?: string | null;
   /** 已配置的代理请求头条数（不透出请求头内容）。 */
   proxyHeaderCount?: number;
-  /** ZCode 目标的 API 协议；null = 按站点协议推断。 */
-  zcodeApiType?: ZCodeApiType | null;
 }
 
 export interface SiteModel {
@@ -171,8 +163,6 @@ export interface CreateSiteInput {
   capabilities?: SiteCapabilities;
   newapiAccessToken?: string | null;
   newapiUserId?: string | null;
-  /** ZCode 目标的 API 协议；缺省 = 按站点协议推断。 */
-  zcodeApiType?: ZCodeApiType | null;
   /** 本地代理请求头覆盖；缺省表示不改动。 */
   proxyHeaders?: ProxyHeader[];
 }
@@ -198,8 +188,6 @@ export interface UpdateSiteInput {
   capabilities?: SiteCapabilities;
   newapiAccessToken?: string | null;
   newapiUserId?: string | null;
-  /** ZCode 目标的 API 协议；缺省不改动，空串表示清除（回到按协议推断）。 */
-  zcodeApiType?: ZCodeApiType | null;
   /** 本地代理请求头覆盖；缺省表示不改动。 */
   proxyHeaders?: ProxyHeader[];
 }
@@ -345,8 +333,6 @@ export interface ApplyRequest {
   piWriteAllModels?: boolean;
   /** Write the site model list into Prime's managed provider. */
   primeWriteAllModels?: boolean;
-  /** Write the site model list into ZCode's managed providers. */
-  zcodeWriteAllModels?: boolean;
 }
 
 export interface ApplyTargetResult {
@@ -376,8 +362,6 @@ export interface AppSettings {
   codexHomeOverride: string | null;
   piAgentDirOverride: string | null;
   primeAgentDirOverride: string | null;
-  /** ZCode 配置根目录覆盖（默认 `~/.zcode`）。 */
-  zcodeHomeOverride: string | null;
   codexEnvInjectMode: "auto" | "shell_rc" | "user_env" | "file_only";
   forceExclusiveClaudeAuthKey: boolean;
   autoCheckUpdate: boolean;

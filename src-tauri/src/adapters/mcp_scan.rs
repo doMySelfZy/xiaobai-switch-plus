@@ -15,7 +15,6 @@ use crate::domain::McpKind;
 use crate::error::{AppError, AppResult};
 use crate::paths::{
     claude_mcp_json_path, resolve_codex_home, resolve_pi_agent_dir, resolve_prime_agent_dir,
-    zcode_mcp_path,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,7 +33,6 @@ pub enum ScanTarget {
     Codex,
     Pi,
     Prime,
-    ZCode,
 }
 
 /// 扫描到的一条已有 MCP。**不含任何密钥值**。
@@ -164,34 +162,32 @@ fn kind_from_entry(entry: &Value) -> McpKind {
     }
 }
 
-/// JSON 目标里 MCP 条目所在的那一层：ZCode 在 `mcp.servers`，其余在顶层 `mcpServers`。
-fn json_servers_value<'a>(root: &'a Value, target: ScanTarget) -> Option<&'a Value> {
-    match target {
-        ScanTarget::ZCode => root.get("mcp").and_then(|mcp| mcp.get("servers")),
-        _ => root.get("mcpServers"),
-    }
+/// JSON 目标里 MCP 条目所在的那一层（键名）。
+///
+/// 三个 JSON 目标（Claude / Pi / Prime）都是顶层 `mcpServers`，Codex 走 TOML 不经过这里。
+/// 退役目标曾把条目嵌在 `mcp.servers` 下，那层按目标特判的写法随它的枚举变体一起删除：
+/// 删掉之后兜底路径对三个存活目标恰好仍是正确的那一层，所以**没有**静默语义变化
+/// （原实现的兜底臂就是 `mcpServers`）。将来若有新目标换成别的层级，必须重新按
+/// `ScanTarget` 分支取值，而不是往这里塞字符串特判。
+const JSON_SERVERS_KEY: &str = "mcpServers";
+
+fn json_servers_value(root: &Value) -> Option<&Value> {
+    root.get(JSON_SERVERS_KEY)
 }
 
-fn json_servers_key(target: ScanTarget) -> &'static str {
-    match target {
-        ScanTarget::ZCode => "mcp.servers",
-        _ => "mcpServers",
-    }
-}
-
-/// JSON 形态（Claude / Pi / Prime / ZCode）的 MCP 条目解析。
+/// JSON 形态（Claude / Pi / Prime）的 MCP 条目解析。
 ///
 /// `config` 里剔除 env/headers 后返回：那两个字段单独转成键名列表，避免值流出去。
 fn parse_json_servers(text: &str, target: ScanTarget, label: &str) -> AppResult<Vec<ScannedMcp>> {
     let root: Value = serde_json::from_str(text)
         .map_err(|error| AppError::new("invalid_config", format!("{label} 不是合法 JSON: {error}")))?;
-    let Some(map) = json_servers_value(&root, target) else {
+    let Some(map) = json_servers_value(&root) else {
         return Ok(Vec::new());
     };
     let Some(map) = map.as_object() else {
         return Err(AppError::new(
             "invalid_config",
-            format!("{label} 的 {} 不是对象", json_servers_key(target)),
+            format!("{label} 的 {JSON_SERVERS_KEY} 不是对象"),
         ));
     };
 
@@ -324,10 +320,6 @@ pub fn scan_target(
             read_text(&resolve_prime_agent_dir(settings.prime_agent_dir_override.as_deref())?.join("settings.json"))?,
             "Prime settings.json",
         ),
-        ScanTarget::ZCode => (
-            read_text(&zcode_mcp_path(settings.zcode_home_override.as_deref())?)?,
-            "ZCode cli/config.json",
-        ),
     };
 
     let Some(text) = text else {
@@ -348,7 +340,6 @@ pub fn scan_all(settings: &crate::domain::AppSettings) -> ScanOutcome {
         ScanTarget::Codex,
         ScanTarget::Pi,
         ScanTarget::Prime,
-        ScanTarget::ZCode,
     ] {
         match scan_target(target, settings) {
             Ok(Some(entries)) => outcome.entries.extend(entries),
@@ -386,10 +377,6 @@ pub fn load_entry_for_import(
         ScanTarget::Prime => (
             resolve_prime_agent_dir(settings.prime_agent_dir_override.as_deref())?.join("settings.json"),
             "Prime settings.json",
-        ),
-        ScanTarget::ZCode => (
-            zcode_mcp_path(settings.zcode_home_override.as_deref())?,
-            "ZCode cli/config.json",
         ),
     };
 
@@ -467,7 +454,7 @@ pub fn load_entry_for_import(
             let root: Value = serde_json::from_str(&text).map_err(|error| {
                 AppError::new("invalid_config", format!("{label} 不是合法 JSON: {error}"))
             })?;
-            let entry = json_servers_value(&root, target)
+            let entry = json_servers_value(&root)
                 .and_then(|value| value.as_object())
                 .and_then(|map| map.get(key))
                 .ok_or_else(|| AppError::new("not_found", format!("{label} 里没有 MCP 条目 {key}")))?;
@@ -736,55 +723,6 @@ X_Trace = "PLACEHOLDER"
         );
         assert!(!fingerprint.contains("PLACEHOLDER_SECRET"));
         assert_eq!(fingerprint.len(), 64, "sha256 hex");
-    }
-
-    #[test]
-    fn zcode_reads_nested_servers_and_marks_managed() {
-        let text = r#"{
-          "theme": "dark",
-          "mcp": {
-            "servers": {
-              "user-fs": { "type": "stdio", "command": "npx", "env": { "FS_ROOT": "PLACEHOLDER" } },
-              "xiaobai_managed": { "type": "stdio", "command": "uvx" }
-            }
-          }
-        }"#;
-        let entries = parse_json_servers(text, ScanTarget::ZCode, "test").unwrap();
-        assert_eq!(entries.len(), 2);
-        let user = entries.iter().find(|e| e.key == "user-fs").unwrap();
-        assert!(!user.managed);
-        assert_eq!(user.env_keys, vec!["FS_ROOT"]);
-        let managed = entries.iter().find(|e| e.key == "xiaobai_managed").unwrap();
-        assert!(managed.managed);
-
-        // 形状不对要报错，而不是静默当作空。
-        assert!(parse_json_servers(r#"{"mcp":{"servers":"oops"}}"#, ScanTarget::ZCode, "t").is_err());
-    }
-
-    #[test]
-    fn zcode_import_reads_from_cli_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("cli").join("config.json");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            serde_json::to_string(&json!({
-                "mcp": { "servers": { "user-fs": {
-                    "type": "stdio",
-                    "command": "npx",
-                    "env": { "FS_ROOT": "PLACEHOLDER_PATH" }
-                }}}
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        let mut settings = crate::domain::AppSettings::default();
-        settings.zcode_home_override = Some(dir.path().to_string_lossy().to_string());
-
-        let input = load_entry_for_import(ScanTarget::ZCode, "user-fs", &settings).unwrap();
-        assert_eq!(input.name, "user-fs");
-        assert_eq!(input.env["FS_ROOT"], "PLACEHOLDER_PATH");
     }
 
     #[test]

@@ -126,28 +126,6 @@ fn run_rewrite(
             settings.prime_agent_dir_override.as_deref(),
             &backup_root,
         ),
-        TargetKind::ZCode => {
-            crate::adapters::zcode::rewrite_base_url(
-                binding,
-                &effective_site.base_url,
-                settings.zcode_home_override.as_deref(),
-                &backup_root,
-            )?;
-            let mut expected = binding.expected_fields.clone();
-            expected.insert("base_url".into(), effective_site.base_url.clone());
-            Ok(crate::adapters::RewriteOutcome {
-                // ZCode 适配器的 rewrite 不回报备份路径，这里按备份目录的实际内容列出。
-                backup_paths: crate::backup::payload_files(&backup_root)
-                    .into_iter()
-                    .map(|name| backup_root.join(name).display().to_string())
-                    .collect(),
-                live_summary: crate::adapters::zcode::live_summary(
-                    settings.zcode_home_override.as_deref(),
-                )?,
-                expected_fields: expected,
-                message: "ZCode provider route updated.".into(),
-            })
-        }
     };
 
     let result = match rewrite {

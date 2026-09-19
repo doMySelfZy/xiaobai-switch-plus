@@ -99,8 +99,8 @@ export interface RegistrySearchResult {
   nextCursor?: string | null;
 }
 
-/** 扫描目标：五个 Agent 客户端。 */
-export type ScanTarget = "claude_code" | "codex" | "pi" | "prime" | "zcode";
+/** 扫描目标：四个 Agent 客户端。 */
+export type ScanTarget = "claude_code" | "codex" | "pi" | "prime";
 
 /**
  * 扫描到的已有 MCP。

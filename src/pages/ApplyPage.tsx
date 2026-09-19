@@ -6,7 +6,6 @@ import { ClaudeApplyPanel } from "@/components/apply/ClaudeApplyPanel";
 import { CodexApplyPanel } from "@/components/apply/CodexApplyPanel";
 import { PiApplyPanel } from "@/components/apply/PiApplyPanel";
 import { PrimeApplyPanel } from "@/components/apply/PrimeApplyPanel";
-import { ZCodeApplyPanel } from "@/components/apply/ZCodeApplyPanel";
 import { AgentUpdateButton } from "@/components/apply/AgentUpdateButton";
 import { useDeferredTabContent } from "@/hooks/useDeferredTabContent";
 import { useApplyStore, useSiteStore, useUIStore } from "@/stores";
@@ -95,19 +94,6 @@ export function ApplyPage() {
           >
             <AgentUpdateButton />
             <PrimeApplyPanel />
-          </div>
-        )}
-        {mounted.has("zcode") && (
-          <div
-            className="h-full min-h-0"
-            style={{
-              display: applyTab === "zcode" && !showSkeleton ? "flex" : "none",
-              flexDirection: "column",
-            }}
-            aria-hidden={applyTab !== "zcode"}
-          >
-            <AgentUpdateButton />
-            <ZCodeApplyPanel />
           </div>
         )}
       </div>

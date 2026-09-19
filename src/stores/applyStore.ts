@@ -108,7 +108,6 @@ export const useApplyStore = create<ApplyState>((set, get) => ({
         codexCapabilitySource: req.codexCapabilitySource ?? "site",
         piWriteAllModels: req.piWriteAllModels ?? false,
         primeWriteAllModels: req.primeWriteAllModels ?? false,
-        zcodeWriteAllModels: req.zcodeWriteAllModels ?? false,
         apiKeyId: req.apiKeyId ?? null,
       });
       set({ lastResult: result });

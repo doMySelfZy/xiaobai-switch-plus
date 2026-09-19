@@ -1,4 +1,4 @@
-use crate::domain::{AgentRules, TargetKind};
+use crate::domain::{parse_persisted_targets, AgentRules, TargetKind};
 use crate::error::AppResult;
 use crate::repo::sync_meta;
 use chrono::Utc;
@@ -15,7 +15,6 @@ pub fn canonical_targets(targets: &[TargetKind]) -> Vec<TargetKind> {
         TargetKind::Codex,
         TargetKind::Pi,
         TargetKind::Prime,
-        TargetKind::ZCode,
     ]
     .into_iter()
     .filter(|target| targets.contains(target))
@@ -40,9 +39,10 @@ pub fn get(conn: &Connection) -> AppResult<AgentRules> {
     match row {
         Some((body, targets_json, updated_at)) => Ok(AgentRules {
             body,
-            targets: canonical_targets(
-                &serde_json::from_str::<Vec<TargetKind>>(&targets_json).unwrap_or_default(),
-            ),
+            targets: canonical_targets(&parse_persisted_targets(
+                &targets_json,
+                "agent_rules.targets_json",
+            )),
             updated_at,
         }),
         None => Ok(AgentRules::default()),
@@ -69,7 +69,7 @@ pub fn save(conn: &Connection, body: &str, targets: &[TargetKind]) -> AppResult<
 
 pub fn applied_targets(conn: &Connection) -> AppResult<Vec<TargetKind>> {
     match sync_meta::get_meta(conn, APPLIED_TARGETS_KEY)? {
-        Some(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+        Some(json) => Ok(parse_persisted_targets(&json, APPLIED_TARGETS_KEY)),
         None => Ok(Vec::new()),
     }
 }

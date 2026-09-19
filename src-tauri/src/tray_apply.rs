@@ -48,12 +48,6 @@ pub struct PrimeHydration {
     pub write_all_models: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZCodeHydration {
-    pub model_id: Option<String>,
-    pub write_all_models: bool,
-}
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TrayApplyFailed {
@@ -304,43 +298,16 @@ pub fn hydrate_prime(site: &SiteRow, status: Option<&TargetLiveStatus>) -> Prime
     }
 }
 
-/// ZCode 的 live_summary 是「provider id → 名称」，没有模型计数与默认模型，
-/// 所以只能沿用绑定里记下的选择，不能像 Pi/Prime 那样从盘上读回。
-pub fn hydrate_zcode(
-    site: &SiteRow,
-    status: Option<&TargetLiveStatus>,
-    binding: Option<&TargetBinding>,
-) -> ZCodeHydration {
-    let live = status.map(|value| &value.live_summary);
-    let binding_on_site = binding.filter(|value| value.site_id.as_deref() == Some(&site.id));
-    let on_site = applied_on_site(&site.id, status) || binding_on_site.is_some();
-    let live_model = live
-        .and_then(|summary| live_str(summary, &["defaultModel"]))
-        .or_else(|| binding_str(binding_on_site, &["model"]))
-        .or_else(|| status.and_then(|value| value.applied_model_id.clone()));
-    ZCodeHydration {
-        model_id: if on_site {
-            live_model.or_else(|| site.selected_model_id.clone())
-        } else {
-            site.selected_model_id.clone()
-        },
-        write_all_models: binding_str(binding_on_site, &["write_all_models"])
-            .is_some_and(|value| value == "true" || value == "1"),
-    }
-}
-
 pub fn pick_tray_targets(
     has_claude_binding: bool,
     has_codex_binding: bool,
     has_pi_binding: bool,
     has_prime_binding: bool,
-    has_zcode_binding: bool,
 ) -> Vec<TargetKind> {
     if !has_claude_binding
         && !has_codex_binding
         && !has_pi_binding
         && !has_prime_binding
-        && !has_zcode_binding
     {
         return vec![TargetKind::ClaudeCode, TargetKind::Codex];
     }
@@ -356,9 +323,6 @@ pub fn pick_tray_targets(
     }
     if has_prime_binding {
         out.push(TargetKind::Prime);
-    }
-    if has_zcode_binding {
-        out.push(TargetKind::ZCode);
     }
     out
 }
@@ -398,8 +362,7 @@ fn apply_site_from_tray_inner(app: &AppHandle, site_id: &str) -> AppResult<Vec<A
     let has_codex = bindings.iter().any(|b| b.target == TargetKind::Codex);
     let has_pi = bindings.iter().any(|b| b.target == TargetKind::Pi);
     let has_prime = bindings.iter().any(|b| b.target == TargetKind::Prime);
-    let has_zcode = bindings.iter().any(|b| b.target == TargetKind::ZCode);
-    let targets = pick_tray_targets(has_claude, has_codex, has_pi, has_prime, has_zcode);
+    let targets = pick_tray_targets(has_claude, has_codex, has_pi, has_prime);
 
     let mut results = Vec::new();
     let mut attempted = false;
@@ -426,7 +389,6 @@ fn apply_site_from_tray_inner(app: &AppHandle, site_id: &str) -> AppResult<Vec<A
                     h.haiku_model,
                     h.effort.map(|e| e.as_str().into()),
                     Some(h.use_1m_context),
-                    None,
                     None,
                     None,
                     None,
@@ -469,7 +431,6 @@ fn apply_site_from_tray_inner(app: &AppHandle, site_id: &str) -> AppResult<Vec<A
                     None,
                     None,
                     None,
-                    None,
                 )?;
                 results.extend(applied.results);
             }
@@ -503,7 +464,6 @@ fn apply_site_from_tray_inner(app: &AppHandle, site_id: &str) -> AppResult<Vec<A
                     Some(hydration.write_all_models),
                     None,
                     None,
-                    None,
                 )?;
                 results.extend(applied.results);
             }
@@ -520,41 +480,6 @@ fn apply_site_from_tray_inner(app: &AppHandle, site_id: &str) -> AppResult<Vec<A
                     site.id.clone(),
                     vec![TargetKind::Prime],
                     model_id,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    Some(hydration.write_all_models),
-                    None,
-                    None,
-                )?;
-                results.extend(applied.results);
-            }
-            TargetKind::ZCode => {
-                let hydration = hydrate_zcode(&site, status, binding);
-                let Some(model_id) = hydration.model_id.filter(|value| !value.trim().is_empty())
-                else {
-                    continue;
-                };
-                attempted = true;
-                let applied = crate::commands::apply::apply_site(
-                    app.clone(),
-                    app.state::<AppState>(),
-                    site.id.clone(),
-                    vec![TargetKind::ZCode],
-                    model_id,
-                    None,
                     None,
                     None,
                     None,
@@ -617,7 +542,6 @@ mod tests {
             newapi_user_id: None,
             proxy_headers_encrypted: None,
             proxy_header_count: 0,
-            zcode_api_type: None,
         }
     }
 
@@ -993,76 +917,34 @@ mod tests {
     #[test]
     fn pick_targets_defaults_to_both_when_unbound() {
         assert_eq!(
-            pick_tray_targets(false, false, false, false, false),
+            pick_tray_targets(false, false, false, false),
             vec![TargetKind::ClaudeCode, TargetKind::Codex]
         );
         assert_eq!(
-            pick_tray_targets(true, false, false, false, false),
+            pick_tray_targets(true, false, false, false),
             vec![TargetKind::ClaudeCode]
         );
         assert_eq!(
-            pick_tray_targets(false, true, false, false, false),
+            pick_tray_targets(false, true, false, false),
             vec![TargetKind::Codex]
         );
         assert_eq!(
-            pick_tray_targets(false, false, true, false, false),
+            pick_tray_targets(false, false, true, false),
             vec![TargetKind::Pi]
         );
         assert_eq!(
-            pick_tray_targets(false, false, false, true, false),
+            pick_tray_targets(false, false, false, true),
             vec![TargetKind::Prime]
         );
         assert_eq!(
-            pick_tray_targets(false, false, false, false, true),
-            vec![TargetKind::ZCode]
-        );
-        assert_eq!(
-            pick_tray_targets(true, true, true, true, true),
+            pick_tray_targets(true, true, true, true),
             vec![
                 TargetKind::ClaudeCode,
                 TargetKind::Codex,
                 TargetKind::Pi,
-                TargetKind::Prime,
-                TargetKind::ZCode
+                TargetKind::Prime
             ]
         );
-    }
-
-    #[test]
-    fn hydrate_zcode_falls_back_to_binding_write_all() {
-        // ZCode 的 live_summary 只有 provider 列表，选中模型与「写入全部模型」只能看绑定。
-        let mut status = codex_status();
-        status.kind = TargetKind::ZCode;
-        status.applied_site_id = Some("shuai".into());
-        status.live_summary = HashMap::from([("xiaobai_site".into(), Some("Relay".into()))]);
-        let mut binding = crate::domain::TargetBinding {
-            target: TargetKind::ZCode,
-            site_id: Some("shuai".into()),
-            site_name_snapshot: "Relay".into(),
-            model_id: "model-a".into(),
-            provider_id: Some("xiaobai_site".into()),
-            key_fingerprint: String::new(),
-            managed_paths: vec![],
-            managed_env_keys: vec![],
-            expected_fields: HashMap::from([("write_all_models".into(), "true".into())]),
-            orphan: false,
-            applied_at: 0,
-            apply_record_id: None,
-            api_key: Default::default(),
-        };
-        binding.expected_fields.insert("model".into(), "model-b".into());
-
-        let defaults = hydrate_zcode(
-            &site(
-                "shuai",
-                Some("fallback"),
-                ClaudeAuthKeyStyle::AnthropicAuthToken,
-            ),
-            Some(&status),
-            Some(&binding),
-        );
-        assert_eq!(defaults.model_id.as_deref(), Some("model-b"));
-        assert!(defaults.write_all_models);
     }
 
     #[test]

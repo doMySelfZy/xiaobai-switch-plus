@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>一站式 AI 编码助手配置管理工具</strong><br>
-  统一管理 Claude Code、Codex、Pi、Prime、ZCode 的站点、模型与配置
+  统一管理 Claude Code、Codex、Pi、Prime 的站点、模型与配置
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ### 🎯 站点优先，统一管理
 - **一站多模型**：每个站点配置一次 Base URL + API Key，自动拉取所有可用模型
-- **目标独立配置**：Claude Code、Codex、Pi、Prime、ZCode 各有专属表单，互不干扰
+- **目标独立配置**：Claude Code、Codex、Pi、Prime 各有专属表单，互不干扰
 - **一键应用**：勾选目标后自动写入各 CLI 的原生配置文件，保持格式与注释
 
 ### 🔄 WebDAV 真同步
@@ -84,7 +84,7 @@
 
 2. **配置目标**
    - 进入「应用中心」
-   - 选择目标（Claude Code / Codex / Pi / Prime / ZCode）
+   - 选择目标（Claude Code / Codex / Pi / Prime）
    - 勾选要使用的站点与模型
    - 配置默认模型、别名映射等
    - 点击「应用」写入目标配置
@@ -221,7 +221,6 @@ pnpm tauri build
 - **Codex**：写入 `~/.codex/config.toml`、`~/.codex/models/xiaobai-model-catalog.json`
 - **Pi**：写入 `~/.pi/agent/{models,auth,settings,mcp}.json`、`AGENTS.md`
 - **Prime**：写入 `~/.prime/agent/{models,auth,settings}.json`、`AGENTS.md`
-- **ZCode**：写入 ZCode 配置目录的 `settings.json`
 
 ---
 

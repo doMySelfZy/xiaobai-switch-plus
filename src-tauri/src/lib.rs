@@ -33,6 +33,7 @@ mod tray_apply;
 mod url_normalize;
 mod webdav;
 mod window_lifecycle;
+mod zcode_retirement;
 
 use state::AppState;
 use std::sync::atomic::Ordering;
@@ -78,6 +79,18 @@ pub fn run() {
                 .with_conn(repo::settings::get_settings)
                 .map(|s| s.language)
                 .unwrap_or_else(|_| "zh-CN".into());
+            // ZCode 目标撤退的文件侧清理（见 zcode_retirement.rs 文件头）：数据库就绪之后、
+            // 托盘与本地代理启动之前跑一次。幂等，所以每次启动都跑。
+            // 刻意不放 `apply_schema`：那条路径也会被备份恢复与外部库校验复用，在那些场合
+            // 去动用户真实的 ~/.zcode 是错的。
+            // override 走原始 blob 键而不是 `AppSettings` 字段：字段已随目标删掉，而这个键
+            // 要到第一次保存设置才会被重写掉，所以趁还没写之前读。
+            let leftover_zcode_home = state
+                .db
+                .with_conn(zcode_retirement::leftover_home_override)
+                .ok()
+                .flatten();
+            zcode_retirement::clean_external_once(leftover_zcode_home.as_deref());
             let start_in_tray = state.start_in_tray.load(Ordering::Relaxed);
             app.manage(state);
             let sync_daemon_app = app.handle().clone();

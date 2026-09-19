@@ -78,7 +78,6 @@ pub enum TargetKind {
     Pi,
     #[serde(alias = "prime_agent", alias = "prime-agent")]
     Prime,
-    ZCode,
 }
 
 impl TargetKind {
@@ -88,7 +87,6 @@ impl TargetKind {
             Self::Codex => "codex",
             Self::Pi => "pi",
             Self::Prime => "prime",
-            Self::ZCode => "zcode",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -97,10 +95,48 @@ impl TargetKind {
             "codex" => Some(Self::Codex),
             "pi" => Some(Self::Pi),
             "prime" | "prime_agent" | "prime-agent" => Some(Self::Prime),
-            "zcode" => Some(Self::ZCode),
             _ => None,
         }
     }
+}
+
+/// 解析**持久化**的目标数组（`mcp_servers.targets_json`、`agent_rules.targets_json`、
+/// `sync_meta` 里的两份 applied 目标）。
+///
+/// 不能用 `from_str::<Vec<TargetKind>>(..).unwrap_or_default()`：那会把「数组里有一个本机
+/// 不认识的目标」和「用户一个目标都没勾」压成同一个空数组，于是任何一次脏数据都会静默清空
+/// **所有**目标的托管块清理集合（design.md §3.3 指出的事故放大器）。这里逐元素解析：
+/// 认不出的跳过并 warn，认得出的照常返回。
+pub fn parse_persisted_targets(json: &str, context: &str) -> Vec<TargetKind> {
+    let items: Vec<serde_json::Value> = match serde_json::from_str(json) {
+        Ok(items) => items,
+        Err(error) => {
+            tracing::warn!(
+                target = "persistence",
+                context,
+                error = %error,
+                "持久化目标数组无法解析，按空集合处理"
+            );
+            return Vec::new();
+        }
+    };
+    let mut out: Vec<TargetKind> = Vec::new();
+    for item in items {
+        match item.as_str().and_then(TargetKind::parse) {
+            Some(target) => {
+                if !out.contains(&target) {
+                    out.push(target);
+                }
+            }
+            None => tracing::warn!(
+                target = "persistence",
+                context,
+                entry = %item,
+                "持久化目标数组里有本机不认识的目标，跳过该项"
+            ),
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,9 +198,6 @@ pub struct SiteDto {
     /// 已配置的代理请求头条数（明文计数，列表不返回请求头内容）。
     #[serde(default)]
     pub proxy_header_count: u32,
-    /// ZCode 目标的 API 协议；`None` = 按站点协议推断。
-    #[serde(default)]
-    pub zcode_api_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,9 +246,6 @@ pub struct CreateSiteInput {
     /// 本地代理请求头覆盖。`None` = 不改动既有值。
     #[serde(default)]
     pub proxy_headers: Option<Vec<ProxyHeader>>,
-    /// ZCode 目标的 API 协议（`anthropic-messages` 等）。`None` = 按站点协议推断。
-    #[serde(default)]
-    pub zcode_api_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -283,9 +313,6 @@ pub struct UpdateSiteInput {
     /// 本地代理请求头覆盖。`None` = 不改动既有值。
     #[serde(default)]
     pub proxy_headers: Option<Vec<ProxyHeader>>,
-    /// ZCode 目标的 API 协议（`anthropic-messages` 等）。`None` = 按站点协议推断。
-    #[serde(default)]
-    pub zcode_api_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -582,9 +609,6 @@ pub struct AppSettings {
     pub pi_agent_dir_override: Option<String>,
     #[serde(default)]
     pub prime_agent_dir_override: Option<String>,
-    /// ZCode 配置根目录覆盖（默认 `~/.zcode`，provider 在 `v2/`、MCP 在 `cli/`）。
-    #[serde(default)]
-    pub zcode_home_override: Option<String>,
     pub codex_env_inject_mode: String,
     pub force_exclusive_claude_auth_key: bool,
     #[serde(default = "default_true")]
@@ -898,7 +922,6 @@ impl Default for AppSettings {
             codex_home_override: None,
             pi_agent_dir_override: None,
             prime_agent_dir_override: None,
-            zcode_home_override: None,
             codex_env_inject_mode: "auto".into(),
             force_exclusive_claude_auth_key: false,
             auto_check_update: true,
@@ -1090,8 +1113,6 @@ pub struct SiteRow {
     /// 加密存储的 `Vec<ProxyHeader>` JSON；UI 只在编辑时按需解密。
     pub proxy_headers_encrypted: Option<String>,
     pub proxy_header_count: u32,
-    /// ZCode 目标使用的 API 协议；未设置时按 `protocol` 推断。
-    pub zcode_api_type: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1160,7 +1181,6 @@ impl SiteRow {
                 .is_some_and(|token| !token.is_empty()),
             newapi_user_id: self.newapi_user_id.clone(),
             proxy_header_count: self.proxy_header_count,
-            zcode_api_type: self.zcode_api_type.clone(),
         }
     }
 

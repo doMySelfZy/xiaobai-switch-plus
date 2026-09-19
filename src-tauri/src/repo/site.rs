@@ -49,7 +49,6 @@ fn map_site(row: &rusqlite::Row<'_>) -> rusqlite::Result<SiteRow> {
         newapi_user_id: row.get(20).ok().flatten(),
         proxy_headers_encrypted: row.get(21).ok().flatten(),
         proxy_header_count: row.get::<_, Option<i64>>(22)?.unwrap_or(0) as u32,
-        zcode_api_type: row.get(23).ok().flatten(),
     })
 }
 
@@ -86,7 +85,7 @@ pub fn get_site_proxy_headers(
         .map_err(|e| AppError::new("internal", format!("stored proxy headers are invalid: {e}")))
 }
 
-const SITE_SELECT: &str = "s.id, s.name, s.base_url, k.api_key_encrypted, k.key_prefix, s.protocol, s.claude_auth_key_style, s.notes, s.enabled, s.sort_order, k.selected_model_id, k.last_model_fetch_at, k.last_model_fetch_latency_ms, k.last_model_fetch_error, s.created_at, s.updated_at, s.base_urls_json, s.capabilities_json, k.id, s.newapi_access_token_encrypted, s.newapi_user_id, s.proxy_headers_encrypted, s.proxy_header_count, s.zcode_api_type";
+const SITE_SELECT: &str = "s.id, s.name, s.base_url, k.api_key_encrypted, k.key_prefix, s.protocol, s.claude_auth_key_style, s.notes, s.enabled, s.sort_order, k.selected_model_id, k.last_model_fetch_at, k.last_model_fetch_latency_ms, k.last_model_fetch_error, s.created_at, s.updated_at, s.base_urls_json, s.capabilities_json, k.id, s.newapi_access_token_encrypted, s.newapi_user_id, s.proxy_headers_encrypted, s.proxy_header_count";
 const SITE_FROM: &str = "sites s LEFT JOIN site_api_keys k ON k.site_id = s.id AND k.is_active = 1";
 
 fn attach_keys(conn: &Connection, sites: &mut [SiteRow]) -> AppResult<()> {
@@ -184,8 +183,8 @@ pub fn create_site(
     let (proxy_headers_encrypted, proxy_header_count) =
         proxy_headers_blob(crypto, input.proxy_headers.as_deref().unwrap_or(&[]))?;
     tx.execute(
-        "INSERT INTO sites (id, name, base_url, protocol, claude_auth_key_style, notes, enabled, sort_order, created_at, updated_at, base_urls_json, capabilities_json, newapi_access_token_encrypted, newapi_user_id, proxy_headers_encrypted, proxy_header_count, zcode_api_type)
-         VALUES (?1,?2,?3,?4,?5,?6,1,?7,?8,?8,?9,?10,?11,?12,?13,?14,?15)",
+        "INSERT INTO sites (id, name, base_url, protocol, claude_auth_key_style, notes, enabled, sort_order, created_at, updated_at, base_urls_json, capabilities_json, newapi_access_token_encrypted, newapi_user_id, proxy_headers_encrypted, proxy_header_count)
+         VALUES (?1,?2,?3,?4,?5,?6,1,?7,?8,?8,?9,?10,?11,?12,?13,?14)",
         params![
             id,
             input.name,
@@ -205,11 +204,6 @@ pub fn create_site(
                 .filter(|s| !s.is_empty()),
             proxy_headers_encrypted,
             proxy_header_count as i64,
-            input
-                .zcode_api_type
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty()),
         ],
     )?;
     let first_label = match input
@@ -324,14 +318,6 @@ fn apply_site_update(
         site.proxy_headers_encrypted = blob;
         site.proxy_header_count = count;
     }
-    if let Some(api_type) = input.zcode_api_type.as_deref() {
-        let trimmed = api_type.trim();
-        site.zcode_api_type = if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed.to_string())
-        };
-    }
     site.updated_at = Utc::now().timestamp_millis();
 
     persist_site(conn, &site)?;
@@ -340,7 +326,7 @@ fn apply_site_update(
 
 fn persist_site(conn: &Connection, site: &SiteRow) -> AppResult<()> {
     conn.execute(
-        "UPDATE sites SET name=?2, base_url=?3, protocol=?4, claude_auth_key_style=?5, notes=?6, enabled=?7, sort_order=?8, updated_at=?9, base_urls_json=?10, capabilities_json=?11, newapi_access_token_encrypted=?12, newapi_user_id=?13, proxy_headers_encrypted=?14, proxy_header_count=?15, zcode_api_type=?16 WHERE id=?1",
+        "UPDATE sites SET name=?2, base_url=?3, protocol=?4, claude_auth_key_style=?5, notes=?6, enabled=?7, sort_order=?8, updated_at=?9, base_urls_json=?10, capabilities_json=?11, newapi_access_token_encrypted=?12, newapi_user_id=?13, proxy_headers_encrypted=?14, proxy_header_count=?15 WHERE id=?1",
         params![
             site.id,
             site.name,
@@ -356,8 +342,7 @@ fn persist_site(conn: &Connection, site: &SiteRow) -> AppResult<()> {
             site.newapi_access_token_encrypted,
             site.newapi_user_id,
             site.proxy_headers_encrypted,
-            site.proxy_header_count as i64,
-            site.zcode_api_type
+            site.proxy_header_count as i64
         ],
     )?;
     Ok(())
@@ -810,7 +795,6 @@ mod tests {
                 newapi_access_token: Some("demo-newapi-token".into()),
                 newapi_user_id: Some("42".into()),
                 proxy_headers: None,
-                zcode_api_type: None,
             },
         )
         .unwrap();
@@ -877,7 +861,6 @@ mod tests {
                     value: "${SESSION}".into(),
                     enabled: true,
                 }]),
-                zcode_api_type: None,
             },
         )
         .unwrap();
@@ -938,7 +921,6 @@ mod tests {
                     value: "text/plain".into(),
                     enabled: true,
                 }]),
-                zcode_api_type: None,
             },
         )
         .unwrap_err();
@@ -971,7 +953,6 @@ mod tests {
                 notes: None,
                 capabilities: None,
                 proxy_headers: None,
-                zcode_api_type: None,
             },
         )
         .unwrap();
@@ -1007,7 +988,6 @@ mod tests {
                 notes: None,
                 capabilities: None,
                 proxy_headers: None,
-                zcode_api_type: None,
             },
         )
         .unwrap();
@@ -1058,7 +1038,6 @@ mod tests {
                 notes: None,
                 capabilities: None,
                 proxy_headers: None,
-                zcode_api_type: None,
             },
         )
         .unwrap_err();
@@ -1071,68 +1050,6 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM site_api_keys", [], |r| r.get(0))
             .unwrap();
         assert_eq!(keys, 0);
-    }
-
-    #[test]
-    fn zcode_api_type_round_trip_and_clear() {
-        let conn = Connection::open_in_memory().unwrap();
-        crate::db::apply_schema(&conn).unwrap();
-        let crypto = crate::crypto::Crypto::from_key([5u8; 32]);
-        let created = create_site(
-            &conn,
-            &crypto,
-            CreateSiteInput {
-                name: "Relay".into(),
-                base_url: "https://a.example.com".into(),
-                base_urls: None,
-                api_key: fake_key("one"),
-                api_key_label: None,
-                extra_api_keys: Vec::new(),
-                protocol: None,
-                claude_auth_key_style: None,
-                notes: None,
-                capabilities: None,
-                newapi_access_token: None,
-                newapi_user_id: None,
-                proxy_headers: None,
-                zcode_api_type: Some("anthropic-messages".into()),
-            },
-        )
-        .unwrap();
-        assert_eq!(created.zcode_api_type.as_deref(), Some("anthropic-messages"));
-
-        let updated = update_site(
-            &conn,
-            &crypto,
-            &created.id,
-            UpdateSiteInput {
-                zcode_api_type: Some("openai-chat-completions".into()),
-                ..UpdateSiteInput::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            updated.zcode_api_type.as_deref(),
-            Some("openai-chat-completions")
-        );
-        // 重新读取也要是落库值，而不是内存里的返回值。
-        assert_eq!(
-            get_site(&conn, &created.id).unwrap().zcode_api_type.as_deref(),
-            Some("openai-chat-completions")
-        );
-
-        // 空串 = 回到「按站点协议推断」。
-        let cleared = update_site(
-            &conn,
-            &crypto,
-            &created.id,
-            UpdateSiteInput {
-                zcode_api_type: Some("  ".into()),
-                ..UpdateSiteInput::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(cleared.zcode_api_type, None);
     }
 
     #[test]
@@ -1157,7 +1074,6 @@ mod tests {
                 notes: None,
                 capabilities: None,
                 proxy_headers: None,
-                zcode_api_type: None,
             },
         )
         .unwrap();

@@ -3,7 +3,7 @@ use super::{
 };
 use crate::crypto::Crypto;
 use crate::error::{AppError, AppResult};
-use crate::paths::{app_backups_dir, db_path, master_key_path};
+use crate::paths::{app_backups_dir, master_key_path};
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::Path;
@@ -283,6 +283,23 @@ fn ensure_incremental_schema(conn: &Connection) -> AppResult<()> {
     ensure_mcp_schema(conn)?;
     ensure_agent_rules_schema(conn)?;
     ensure_agent_update_status_schema(conn)?;
+    // ZCode 目标撤退的数据清洗（见 zcode_retirement.rs 文件头）。刻意放在最后：
+    // 它依赖上面的增量补齐把表/列准备好。失败只降级为 warn —— 让清洗下次再试，
+    // 冒泡出去会变成「数据库打不开」，用户连应用都用不了。
+    match crate::zcode_retirement::ensure_in_db(conn) {
+        Ok(changes) => {
+            if !changes.is_empty() {
+                tracing::info!(
+                    touched = changes.touched.len(),
+                    skipped = changes.warnings.len(),
+                    "ZCode 撤退清洗已落库（升级后的一次性行为）"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "ZCode 撤退清洗未完成，下次启动重试");
+        }
+    }
     Ok(())
 }
 
@@ -688,10 +705,33 @@ fn maybe_backup(conn: &Connection, mode: BackupMode) -> AppResult<()> {
 }
 
 fn backup_pre_migration(conn: &Connection) -> AppResult<()> {
-    let dest_dir = app_backups_dir()?.join("pre_migration_site_api_keys");
+    backup_snapshot(conn, "pre_migration_site_api_keys", true, true)?;
+    Ok(())
+}
+
+/// 整库快照的共用实现：`VACUUM INTO` 一份数据库 + 随行的 `master.key`。
+///
+/// 两个调用方的诉求正好相反，所以做成参数而不是复制一份易错的备份逻辑：
+/// - 迁移前快照（`backup_pre_migration`）：每次跑迁移都重拍，且**必须**拿到 master.key，
+///   否则快照解不开密文，等于没有；
+/// - ZCode 撤退快照（`zcode_retirement::backup_before_first_write`）：只留**最早**那一份
+///   （要的是「清洗前」的状态，后续轮次数据已被改动，重拍无意义），并且缺 key 只 warn：
+///   清洗推迟到下次启动无所谓，让 `Db::open` 失败会让用户连应用都打不开。
+///
+/// 返回值 = 这次是否真的写了快照（`false` = 已存在同名额的快照，按策略保留旧的）。
+pub(crate) fn backup_snapshot(
+    conn: &Connection,
+    subdir: &str,
+    replace_existing: bool,
+    require_master_key: bool,
+) -> AppResult<bool> {
+    let dest_dir = app_backups_dir()?.join(subdir);
     fs::create_dir_all(&dest_dir)?;
     let dest_db = dest_dir.join("xiaobai-switch.db");
     if dest_db.exists() {
+        if !replace_existing {
+            return Ok(false);
+        }
         fs::remove_file(&dest_db)?;
     }
     let escaped = dest_db.to_string_lossy().replace('\'', "''");
@@ -710,14 +750,18 @@ fn backup_pre_migration(conn: &Connection) -> AppResult<()> {
                 format!("pre-migration master.key backup failed: {e}"),
             )
         })?;
-    } else {
+    } else if require_master_key {
         return Err(AppError::new(
             "master_key_missing",
             "Cannot decrypt stored API keys: master.key is missing",
         ));
+    } else {
+        tracing::warn!(
+            dir = %dest_dir.display(),
+            "master.key 缺失，整库快照未含解密密钥"
+        );
     }
-    let _ = db_path();
-    Ok(())
+    Ok(true)
 }
 
 fn backfill_base_urls(conn: &Connection) -> AppResult<()> {

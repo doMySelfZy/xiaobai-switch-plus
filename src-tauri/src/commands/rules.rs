@@ -16,7 +16,6 @@ fn overrides_from(settings: &AppSettings) -> TargetOverrides {
         codex_home: settings.codex_home_override.clone(),
         pi_agent_dir: settings.pi_agent_dir_override.clone(),
         prime_agent_dir: settings.prime_agent_dir_override.clone(),
-        zcode_home: settings.zcode_home_override.clone(),
     }
 }
 

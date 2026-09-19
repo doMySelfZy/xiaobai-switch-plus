@@ -3,7 +3,6 @@ use crate::domain::{AgentRulesTargetResult, TargetKind};
 use crate::error::{AppError, AppResult};
 use crate::paths::{
     claude_rules_path, resolve_codex_home, resolve_pi_agent_dir, resolve_prime_agent_dir,
-    resolve_zcode_home,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -200,9 +199,9 @@ fn codex_override_shadow(codex_home: &Path) -> Option<String> {
         .then(|| override_path.display().to_string())
 }
 
-/// Pi/Prime/ZCode 的目标文件选择：已有 `AGENTS.md` 用它；否则已有 `CLAUDE.md` 就追加进
+/// Pi/Prime 的目标文件选择：已有 `AGENTS.md` 用它；否则已有 `CLAUDE.md` 就追加进
 /// `CLAUDE.md`（新建 `AGENTS.md` 会让用户手写的 `CLAUDE.md` 被整体遮蔽）；都没有则新建
-/// `AGENTS.md`（三个 CLI 文档里的首选文件名）。
+/// `AGENTS.md`（两个 CLI 文档里的首选文件名）。
 fn agents_or_claude(agent_dir: &Path) -> PathBuf {
     let agents = agent_dir.join("AGENTS.md");
     if agents.is_file() {
@@ -223,21 +222,16 @@ fn target_path(target: TargetKind, overrides: &TargetOverrides) -> AppResult<Pat
         TargetKind::Prime => {
             agents_or_claude(&resolve_prime_agent_dir(overrides.prime_agent_dir.as_deref())?)
         }
-        // ZCode 与 Pi/Prime 同一套约定（ZCode 文档未提 override 文件）。
-        TargetKind::ZCode => {
-            agents_or_claude(&resolve_zcode_home(overrides.zcode_home.as_deref())?)
-        }
     })
 }
 
-/// 五个目标的用户级 override 设置（与 `commands/apply.rs` 用的是同一批字段）。
+/// 四个目标的用户级 override 设置（与 `commands/apply.rs` 用的是同一批字段）。
 #[derive(Debug, Default, Clone)]
 pub struct TargetOverrides {
     pub claude_home: Option<String>,
     pub codex_home: Option<String>,
     pub pi_agent_dir: Option<String>,
     pub prime_agent_dir: Option<String>,
-    pub zcode_home: Option<String>,
 }
 
 pub fn target_paths(overrides: &TargetOverrides) -> AppResult<Vec<(TargetKind, PathBuf)>> {
@@ -246,7 +240,6 @@ pub fn target_paths(overrides: &TargetOverrides) -> AppResult<Vec<(TargetKind, P
         TargetKind::Codex,
         TargetKind::Pi,
         TargetKind::Prime,
-        TargetKind::ZCode,
     ]
     .into_iter()
     .map(|target| Ok((target, target_path(target, overrides)?)))
@@ -591,7 +584,6 @@ mod tests {
             codex_home: Some("/tmp/x".into()),
             pi_agent_dir: Some("/tmp/p".into()),
             prime_agent_dir: Some("/tmp/r".into()),
-            zcode_home: Some("/tmp/z".into()),
         };
         let paths = target_paths(&overrides).unwrap();
         assert_eq!(
@@ -600,31 +592,13 @@ mod tests {
                 TargetKind::ClaudeCode,
                 TargetKind::Codex,
                 TargetKind::Pi,
-                TargetKind::Prime,
-                TargetKind::ZCode
+                TargetKind::Prime
             ]
         );
         assert_eq!(paths[0].1, PathBuf::from("/tmp/c/CLAUDE.md"));
         assert_eq!(paths[1].1, PathBuf::from("/tmp/x/AGENTS.md"));
         assert_eq!(paths[2].1, PathBuf::from("/tmp/p/AGENTS.md"));
         assert_eq!(paths[3].1, PathBuf::from("/tmp/r/AGENTS.md"));
-        assert_eq!(paths[4].1, PathBuf::from("/tmp/z/AGENTS.md"));
-    }
-
-    #[test]
-    fn zcode_rules_prefer_existing_claude_md() {
-        let dir = tempdir().unwrap();
-        let home = dir.path().join("zcode");
-        fs::create_dir(&home).unwrap();
-        fs::write(home.join("CLAUDE.md"), "用户\n").unwrap();
-        let overrides = TargetOverrides {
-            zcode_home: Some(home.display().to_string()),
-            ..Default::default()
-        };
-        assert_eq!(
-            target_path(TargetKind::ZCode, &overrides).unwrap(),
-            home.join("CLAUDE.md")
-        );
     }
 
     #[test]
@@ -635,7 +609,6 @@ mod tests {
             codex_home: Some(dir.path().join("codex").display().to_string()),
             pi_agent_dir: Some(dir.path().join("pi").display().to_string()),
             prime_agent_dir: Some(dir.path().join("prime").display().to_string()),
-            zcode_home: Some(dir.path().join("zcode").display().to_string()),
         };
         let root = backup_root(dir.path());
 
@@ -644,7 +617,6 @@ mod tests {
             TargetKind::Codex,
             TargetKind::Pi,
             TargetKind::Prime,
-            TargetKind::ZCode,
         ] {
             let out = apply_to_target(target, Some("全局约束"), &overrides, &root).unwrap();
             assert!(out.ok, "{target:?} apply failed");
@@ -657,14 +629,12 @@ mod tests {
         assert!(dir.path().join("codex").join("AGENTS.md").is_file());
         assert!(dir.path().join("pi").join("AGENTS.md").is_file());
         assert!(dir.path().join("prime").join("AGENTS.md").is_file());
-        assert!(dir.path().join("zcode").join("AGENTS.md").is_file());
 
         for target in [
             TargetKind::ClaudeCode,
             TargetKind::Codex,
             TargetKind::Pi,
             TargetKind::Prime,
-            TargetKind::ZCode,
         ] {
             let out = apply_to_target(target, None, &overrides, &root).unwrap();
             assert!(out.ok);

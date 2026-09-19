@@ -7,14 +7,13 @@ import { useProxyStore, useUIStore } from "@/stores";
 import type { LocalProxyRequestLogEntry } from "@/types/proxy";
 import type { TargetKind } from "@/types/domain";
 
-const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime", "zcode"];
+const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
 
 const TARGET_LABEL_KEYS: Record<TargetKind, string> = {
   claude_code: "proxy.targetClaudeCode",
   codex: "proxy.targetCodex",
   pi: "proxy.targetPi",
   prime: "proxy.targetPrime",
-  zcode: "proxy.targetZCode",
 };
 
 /** invoke 抛出的错误对象形状（与 McpPage 一致）。 */
@@ -165,8 +164,8 @@ export function ProxyPage() {
         await setTakeover(target, enabled);
         message.success(
           enabled
-            ? t("proxy.takeoverEnabled", { target: t(TARGET_LABEL_KEYS[target]) })
-            : t("proxy.takeoverDisabled", { target: t(TARGET_LABEL_KEYS[target]) }),
+            ? t("proxy.takeoverEnabled", { target: t(TARGET_LABEL_KEYS[target] ?? target) })
+            : t("proxy.takeoverDisabled", { target: t(TARGET_LABEL_KEYS[target] ?? target) }),
         );
       } catch (error) {
         message.error(errorText(error));
@@ -357,7 +356,7 @@ export function ProxyPage() {
               style={{ borderBottom: `1px solid ${token.colorBorderSecondary}`, paddingBottom: 8 }}
             >
               <div className="min-w-0">
-                <div className="text-sm">{t(TARGET_LABEL_KEYS[item.target])}</div>
+                <div className="text-sm">{t(TARGET_LABEL_KEYS[item.target] ?? item.target)}</div>
                 <div className="text-xs" style={{ color: token.colorTextSecondary }}>
                   {item.siteName
                     ? t("proxy.boundSite", { site: item.siteName })

@@ -224,12 +224,6 @@ pub fn delete_site(
                         settings.prime_agent_dir_override.as_deref(),
                     )?;
                 }
-                crate::domain::TargetKind::ZCode => {
-                    crate::adapters::zcode::surgical_revert(
-                        &b,
-                        settings.zcode_home_override.as_deref(),
-                    )?;
-                }
             }
             state
                 .db

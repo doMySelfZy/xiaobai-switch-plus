@@ -324,14 +324,6 @@ pub fn sync_applied_keys(
                 &backup_root,
                 &prime_thinking,
             ),
-            TargetKind::ZCode => apply_zcode(
-                &effective_site,
-                &api_key,
-                &binding,
-                models,
-                &settings,
-                &backup_root,
-            ),
         };
 
         match rewrite {
@@ -644,50 +636,6 @@ fn apply_prime(
         outcome.message,
         outcome.live_summary,
         outcome.touched.paths,
-    ))
-}
-
-/// ZCode 的 key 就写在自己的两份配置文件里，没有独立的 auth 文件——重新应用一遍即可换 key。
-fn apply_zcode(
-    site: &SiteRow,
-    api_key: &str,
-    binding: &TargetBinding,
-    models: &[SiteModelDto],
-    settings: &crate::domain::AppSettings,
-    backup_root: &std::path::Path,
-) -> AppResult<(
-    TargetBinding,
-    Vec<String>,
-    String,
-    std::collections::HashMap<String, Option<String>>,
-    Vec<String>,
-)> {
-    let write_all = binding
-        .expected_fields
-        .get("write_all_models")
-        .map(|s| s == "true" || s == "1")
-        .unwrap_or(false);
-    let catalog: Vec<String> = if write_all {
-        models.iter().map(|m| m.model_id.clone()).collect()
-    } else {
-        Vec::new()
-    };
-    let model_ids = crate::commands::apply::zcode_model_ids(&binding.model_id, catalog);
-    let outcome = crate::adapters::zcode::apply(
-        site,
-        api_key,
-        &model_ids,
-        settings.zcode_home_override.as_deref(),
-        backup_root,
-    )?;
-    let mut next = binding.clone();
-    next.applied_at = Utc::now().timestamp_millis();
-    Ok((
-        next,
-        outcome.backup_paths,
-        outcome.message,
-        crate::adapters::zcode::live_summary(settings.zcode_home_override.as_deref())?,
-        Vec::new(),
     ))
 }
 

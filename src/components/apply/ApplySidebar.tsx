@@ -2,7 +2,7 @@ import { Badge, Menu, theme } from "antd";
 import ClaudeCode from "@lobehub/icons/es/ClaudeCode";
 import Codex from "@lobehub/icons/es/Codex";
 import Pi from "@lobehub/icons/es/Pi";
-import { SquareTerminal, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { StatusDot } from "@/components/StatusDot";
 import { useApplyStore } from "@/stores";
@@ -10,14 +10,13 @@ import { useAgentUpdateStore } from "@/stores/agentUpdateStore";
 import { useUIStore, type ApplyTargetTab } from "@/stores/uiStore";
 import { isConfiguredStatus, targetKindLabelKey } from "./TargetStatusCard";
 
-const TAB_KEYS: ApplyTargetTab[] = ["claude_code", "codex", "pi", "prime", "zcode"];
+const TAB_KEYS: ApplyTargetTab[] = ["claude_code", "codex", "pi", "prime"];
 
 const MENU_ICONS: Record<ApplyTargetTab, React.ReactNode> = {
   claude_code: <ClaudeCode size={16} />,
   codex: <Codex size={16} />,
   pi: <Pi size={16} />,
   prime: <Sparkles size={16} data-icon="prime" />,
-  zcode: <SquareTerminal size={16} data-icon="zcode" />,
 };
 
 export function ApplySidebar() {

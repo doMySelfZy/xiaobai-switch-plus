@@ -704,7 +704,6 @@ mod context_1m_tests {
             newapi_user_id: None,
             proxy_headers_encrypted: None,
             proxy_header_count: 0,
-            zcode_api_type: None,
         }
     }
 
@@ -1082,7 +1081,6 @@ mod rewrite_tests {
             newapi_user_id: None,
             proxy_headers_encrypted: None,
             proxy_header_count: 0,
-            zcode_api_type: None,
         }
     }
 

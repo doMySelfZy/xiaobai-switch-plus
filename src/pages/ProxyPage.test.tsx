@@ -37,7 +37,7 @@ describe("ProxyPage", () => {
     expect(await screen.findByText(/代理未运行/)).toBeTruthy();
   });
 
-  it("shows all five takeover targets with their bound state", async () => {
+  it("shows all four takeover targets with their bound state", async () => {
     render(<ProxyPage />, { wrapper: Wrapper });
 
     await waitFor(() => {
@@ -47,14 +47,12 @@ describe("ProxyPage", () => {
         "codex",
         "pi",
         "prime",
-        "zcode",
       ]);
     });
     expect(screen.getByText("Claude Code")).toBeTruthy();
     expect(screen.getByText("Codex")).toBeTruthy();
     expect(screen.getByText("Pi")).toBeTruthy();
     expect(screen.getByText("Prime")).toBeTruthy();
-    expect(screen.getByText("ZCode")).toBeTruthy();
   });
 
   it("states that the log never records headers, bodies or keys", async () => {
@@ -66,9 +64,9 @@ describe("ProxyPage", () => {
 
   it("starts the proxy through the status switch", async () => {
     render(<ProxyPage />, { wrapper: Wrapper });
-    // 页面里有 6 个开关（服务 + 五个目标），服务开关是标题行右侧那个，取第一个。
+    // 页面里有 5 个开关（服务 + 四个目标），服务开关是标题行右侧那个，取第一个。
     const switches = await screen.findAllByRole("switch");
-    expect(switches.length).toBe(6);
+    expect(switches.length).toBe(5);
     expect(useProxyStore.getState().status?.running).toBe(false);
 
     switches[0]!.click();

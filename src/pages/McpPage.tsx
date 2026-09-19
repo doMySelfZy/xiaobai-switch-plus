@@ -49,14 +49,13 @@ import type {
 } from "@/types/mcp";
 import type { TargetKind } from "@/types/domain";
 
-const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime", "zcode"];
+const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
 
 const TARGET_LABEL_KEYS: Record<TargetKind, string> = {
   claude_code: "mcp.targetClaudeCode",
   codex: "mcp.targetCodex",
   pi: "mcp.targetPi",
   prime: "mcp.targetPrime",
-  zcode: "mcp.targetZCode",
 };
 
 const KIND_OPTIONS: { label: string; value: McpKind }[] = [

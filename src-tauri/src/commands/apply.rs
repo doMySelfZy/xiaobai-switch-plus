@@ -22,18 +22,6 @@ fn non_empty(s: Option<String>) -> Option<String> {
     s.map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
-/// ZCode 写入的模型清单：选中模型必备（否则应用完反而选不到模型），
-/// 「写入站点全部模型」开启时再接上目录里的其余模型。
-pub(crate) fn zcode_model_ids(selected: &str, catalog: Vec<String>) -> Vec<String> {
-    let mut out = vec![selected.to_string()];
-    for model in catalog {
-        if model != selected && !out.contains(&model) {
-            out.push(model);
-        }
-    }
-    out
-}
-
 /// `(async)` 是必须的：普通 `#[tauri::command]` 的同步函数在 IPC 处理线程上
 /// 直接执行（`tauri-macros` 生成 `kind.block(result, resolver)`，不跳线程池），
 /// 而本命令会做文件写入、`fsync`、备份与剪枝，整段时间会卡住窗口消息泵。
@@ -61,7 +49,6 @@ pub fn apply_site(
     codex_capability_source: Option<String>,
     pi_write_all_models: Option<bool>,
     prime_write_all_models: Option<bool>,
-    zcode_write_all_models: Option<bool>,
     api_key_id: Option<String>,
 ) -> AppResult<ApplyResult> {
     if targets.is_empty() {
@@ -393,113 +380,6 @@ pub fn apply_site(
             continue;
         }
 
-        if target == TargetKind::ZCode {
-            let write_all = zcode_write_all_models.unwrap_or(false);
-            let catalog: Vec<String> = if write_all {
-                state.db.with_conn(|c| {
-                    let models = repo::site::list_models(c, &site_id)?;
-                    Ok(models.into_iter().map(|model| model.model_id).collect())
-                })?
-            } else {
-                Vec::new()
-            };
-            let model_ids = zcode_model_ids(&model_id, catalog);
-            let mut binding = crate::adapters::zcode::build_binding(
-                &effective,
-                &model_id,
-                &api_key,
-                write_all,
-                settings.zcode_home_override.as_deref(),
-            )?;
-            match crate::adapters::zcode::apply(
-                &effective,
-                &api_key,
-                &model_ids,
-                settings.zcode_home_override.as_deref(),
-                &backup_root,
-            ) {
-                Ok(outcome) => {
-                    let record_id = Uuid::new_v4().to_string();
-                    crate::key_switch::stamp_binding(&mut binding, &key_snapshot);
-                    binding.applied_at = applied_at;
-                    binding.apply_record_id = Some(record_id.clone());
-                    state
-                        .db
-                        .with_conn(|c| repo::binding::upsert_binding(c, &binding))?;
-                    let touched = TouchedKeys {
-                        paths: binding.managed_paths.clone(),
-                        ..Default::default()
-                    };
-                    state.db.with_conn(|c| {
-                        repo::apply::insert_record(
-                            c,
-                            &record_id,
-                            Some(&site.id),
-                            &site.name,
-                            target.as_str(),
-                            &model_id,
-                            binding.provider_id.as_deref(),
-                            "success",
-                            Some(&backup_root.display().to_string()),
-                            &touched,
-                            None,
-                            applied_at,
-                        )
-                    })?;
-                    results.push(ApplyTargetResult {
-                        target,
-                        ok: true,
-                        status: ApplyStatus::Applied,
-                        backup_paths: outcome.backup_paths,
-                        message: outcome.message,
-                        live_summary: Some(crate::adapters::zcode::live_summary(
-                            settings.zcode_home_override.as_deref(),
-                        )?),
-                        touched_keys: Some(touched.paths),
-                    });
-                }
-                Err(error) => {
-                    let touched = TouchedKeys::default();
-                    let _ = state.db.with_conn(|c| {
-                        repo::apply::insert_record(
-                            c,
-                            &Uuid::new_v4().to_string(),
-                            Some(&site.id),
-                            &site.name,
-                            target.as_str(),
-                            &model_id,
-                            binding.provider_id.as_deref(),
-                            "failed",
-                            Some(&backup_root.display().to_string()),
-                            &touched,
-                            Some(&error.to_string()),
-                            applied_at,
-                        )
-                    });
-                    results.push(ApplyTargetResult {
-                        target,
-                        ok: false,
-                        status: ApplyStatus::Failed,
-                        backup_paths: Vec::new(),
-                        message: error.to_string(),
-                        live_summary: None,
-                        touched_keys: None,
-                    });
-                }
-            }
-            finalize_backup_dir(
-                &backup_root,
-                target,
-                &site.name,
-                &model_id,
-                None,
-                applied_at,
-                settings.max_backup_copies,
-                &mut targets_to_prune,
-            );
-            continue;
-        }
-
         if target == TargetKind::Codex {
             match crate::adapters::codex::apply(
                 &effective,
@@ -789,12 +669,6 @@ pub fn revert_target(
                 settings.prime_agent_dir_override.as_deref(),
             )?;
         }
-        TargetKind::ZCode => {
-            crate::adapters::zcode::surgical_revert(
-                &binding,
-                settings.zcode_home_override.as_deref(),
-            )?;
-        }
     }
     state
         .db
@@ -854,12 +728,6 @@ pub fn restore_official_target(
         TargetKind::Prime => crate::adapters::prime::restore_official(
             binding.as_ref(),
             settings.prime_agent_dir_override.as_deref(),
-            &backup_root,
-        )
-        .map(|_| ()),
-        TargetKind::ZCode => crate::adapters::zcode::restore_official(
-            binding.as_ref(),
-            settings.zcode_home_override.as_deref(),
             &backup_root,
         )
         .map(|_| ()),

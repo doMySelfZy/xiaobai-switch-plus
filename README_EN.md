@@ -10,7 +10,7 @@
 
 <p align="center">
   <strong>All-in-One AI Coding Assistant Configuration Manager</strong><br>
-  Unified management for Claude Code, Codex, Pi, Prime, and ZCode sites, models & configs
+  Unified management for Claude Code, Codex, Pi, Prime sites, models & configs
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ### 🎯 Site-First, Unified Management
 - **One Site, Multiple Models**: Configure Base URL + API Key once per site, auto-fetch all available models
-- **Target-Specific Configuration**: Claude Code, Codex, Pi, Prime, ZCode each has dedicated forms, independent of each other
+- **Target-Specific Configuration**: Claude Code, Codex, Pi, Prime each has dedicated forms, independent of each other
 - **One-Click Apply**: Select targets and automatically write to each CLI's native config files, preserving format and comments
 
 ### 🔄 Real WebDAV Sync
@@ -84,7 +84,7 @@
 
 2. **Configure Target**
    - Enter "App Center"
-   - Select target (Claude Code / Codex / Pi / Prime / ZCode)
+   - Select target (Claude Code / Codex / Pi / Prime)
    - Check sites and models to use
    - Configure default model, alias mappings, etc.
    - Click "Apply" to write target config
@@ -221,7 +221,6 @@ pnpm tauri build
 - **Codex**: Writes to `~/.codex/config.toml`, `~/.codex/models/xiaobai-model-catalog.json`
 - **Pi**: Writes to `~/.pi/agent/{models,auth,settings,mcp}.json`, `AGENTS.md`
 - **Prime**: Writes to `~/.prime/agent/{models,auth,settings}.json`, `AGENTS.md`
-- **ZCode**: Writes to ZCode config directory's `settings.json`
 
 ---
 

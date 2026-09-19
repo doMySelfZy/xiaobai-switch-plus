@@ -61,7 +61,6 @@ pub fn target_statuses(
         TargetKind::Codex,
         TargetKind::Pi,
         TargetKind::Prime,
-        TargetKind::ZCode,
     ]
     .into_iter()
     .map(|target| {

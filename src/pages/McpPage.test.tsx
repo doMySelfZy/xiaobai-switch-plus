@@ -443,7 +443,6 @@ describe("McpPage", () => {
       // 打开即扫描，用户能立刻看到别的客户端里配了什么。
       expect(await screen.findByText("existing-fs")).toBeInTheDocument();
       expect(screen.getByText("existing-db")).toBeInTheDocument();
-      expect(screen.getByText("existing-zcode")).toBeInTheDocument();
     });
 
     it("shows which keys an entry needs without exposing values", async () => {
@@ -467,8 +466,8 @@ describe("McpPage", () => {
 
       expect(await screen.findByText("managed-one")).toBeInTheDocument();
       expect(screen.getByText("本工具管理")).toBeInTheDocument();
-      // 三条可纳管（含 ZCode 扫描项），托管那条没有单条纳管按钮（批量按钮不计入）。
-      expect(screen.getAllByRole("button", { name: /^纳\s*管$/ })).toHaveLength(3);
+      // 两条可纳管，托管那条没有单条纳管按钮（批量按钮不计入）。
+      expect(screen.getAllByRole("button", { name: /^纳\s*管$/ })).toHaveLength(2);
     });
 
     it("imports a single entry and marks it as imported", async () => {
@@ -500,7 +499,7 @@ describe("McpPage", () => {
       fireEvent.click(await screen.findByRole("button", { name: /全部纳管/ }));
 
       await waitFor(() => {
-        expect(useMcpStore.getState().servers).toHaveLength(3);
+        expect(useMcpStore.getState().servers).toHaveLength(2);
       });
       // 全部纳管后不再提供批量入口。
       await waitFor(() => {
