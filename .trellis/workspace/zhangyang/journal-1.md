@@ -495,3 +495,49 @@ CLI 配置里的口令不一致，表现为四个 CLI 全部 404。
 ### Next Steps
 
 - 如需验证新拉入的 WebDAV 同步修复与站点协议检测：pnpm test:run、pnpm typecheck，以及 src-tauri 下的 cargo test
+
+
+## Session 18: 移除 ZCode 应用目标：存量清洗、撤退清理器与前端收口（一版到底）
+<!-- trellis-session: v=2 fp=9b441465865f06a3 -->
+
+**Date**: 2026-09-19
+**Task**: 移除 ZCode 应用目标：存量清洗、撤退清理器与前端收口（一版到底）
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+把 ZCode 从第五个应用目标退回 Claude Code / Codex / Pi / Prime 四目标形态。难点不在删代码（61 个文件命中、adapters/zcode.rs 1005 行），而在已发布 v0.1.5 的存量：TargetKind 无 serde(other)，残留值会让整份设置 blob 反序列化失败；脏 zcode 行会让整个 MCP 列表读不出、全局约束目标集合静默清空；未知目标绑定会伪装成 Claude Code 并可能误删用户 ~/.claude/settings.json 的鉴权键。因此先立守门测试（Gate 0 实测 18 红），再建幂等撤退清洗层并挂到 schema 入口，之后才收缩枚举。判断标准是「存量不炸 + 落盘痕迹收口」，不是 grep 不到 zcode。
+
+### Main Changes
+
+- 新增 src-tauri/src/zcode_retirement.rs：DB 撤退清洗 ensure_in_db（挂在 db/migrate.rs::ensure_incremental_schema 三个分支，先只读扫描、无脏则零写入、写变更前整库快照）+ ~/.zcode 落盘痕迹一次性清理 clean_external_once（自包含，不 import adapters::zcode）
+- 删 TargetKind::ZCode、adapters/zcode.rs（1005 行）与 30+ 个后端消费点；前端三份并列联合（TargetKind / ApplyTargetTab / ScanTarget）同批收缩，删 ZCodeApplyPanel 与 i18n 中英各 24 键（含键名不含 zcode 的死键 apply.dualWarning）
+- 修掉两处静默错误放大器：repo/binding.rs 未知目标跳过而非冒充 claude_code；新增 domain::parse_persisted_targets 逐元素解析，替换 rules/mcp 三处 unwrap_or_default()
+- 兼容红线全部保住：sites.zcode_api_type 物理列保留只置 NULL（DROP 会重演 sync.rs 记录的跨机互相覆盖事故）、FINGERPRINT_TABLES 与 ALGORITHM_VERSION 零改动、仓库根 .zcode/ 53 个文件完好
+- 规格沉淀：新增 .trellis/spec/backend/target-retirement.md（清洗先于删枚举的硬顺序、两种拼写 z_code/zcode、失败矩阵、变异验证清单），backend/index.md 加「提交前机械检查」一节，frontend/type-safety.md 记编译器照不到的三类点
+- 经用户批准补装 clippy 0.1.98 / rustfmt 1.9.0 后做实此前只能近似的门禁：交集查出 2 条由新增代码引入的 clippy 警告并修掉；确认 rustfmt 非本仓约定（无 rustfmt.toml、CI 无 fmt 步骤），未跑 cargo fmt
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f54aca1` | feat(targets)!: 移除 ZCode 应用目标，存量与落盘痕迹一次性收口 |
+| `0259420` | docs(trellis): 记录 ZCode 目标退役的规划、执行与规格 |
+| `cc9b437` | style(targets): 清零新增代码的 clippy 警告并补记工具链核查口径 |
+
+### Testing
+
+- [OK] [OK] cargo test 579 passed / 0 failed / 2 ignored；cargo test zcode_retirement 27 passed
+- [OK] [OK] pnpm typecheck 零错误；pnpm test:run 432 passed（2 个既有 collection 失败与本任务无关，已记在 frontend/quality-guidelines.md）
+- [OK] [OK] cargo clippy --lib --tests：0 error，131 条警告与本次新增行交集为 0（首查命中 2 条，已修）
+- [OK] [ ] 真机 GUI 冒烟未做（implement.md 5.5 明确未勾）——自动化已覆盖 ensure_in_db 夹具与 tempdir 假 ~/.zcode，剩余缺口只在 lib.rs::setup 的真实启动路径
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 发布说明须写明：ZCode 目标已移除；本应用写进 ~/.zcode 的条目与托管块会在升级启动时自动清一次（写前有备份），用户自己的 ZCode 配置不动；同版本用户应与本版本一起升级（design §6 的跨机口径）
+- 本分支与在飞 M1 站点预置、M2 魔搭余额共用 5 个文件，并入 main 时 src-tauri/src/domain/mod.rs、quota_probe/mod.rs、src/lib/browserMock.ts、中英 locale 是冲突热区
+- 两份 locale 的顶层 rules 与 proxy 各重复出现两次（内容逐键相同、后写覆盖），本次删键已在 4 个块各删一次；建议单独立任务合并去重

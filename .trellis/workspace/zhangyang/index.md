@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-09-15
+- **Total Sessions**: 18
+- **Last Active**: 2026-09-19
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~497 | Active |
+| `journal-1.md` | ~543 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-09-19 | 移除 ZCode 应用目标：存量清洗、撤退清理器与前端收口（一版到底） | `f54aca1`, `0259420`, `cc9b437` | `feat/site-add-presets` |
 | 17 | 2026-09-15 | 同步 origin/main 最新代码（快进到 b111f81） | - | `main` |
 | 16 | 2026-09-15 | 修复 WebDAV 同步静默覆盖缺陷 | `199860c` | `fix/webdav-sync-integrity` |
 | 15 | 2026-09-14 | 清空任务队列：悬浮窗补齐为可用功能、填充前端 spec、归档全部任务 | `31151f1`, `143c01d`, `763a1f2`, `13d1ca6`, `5fd6eaf` | `main` |
