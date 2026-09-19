@@ -111,7 +111,7 @@ v0.1.5 可能已在用户机器 `~/.zcode` 下写入（解析见 `src-tauri/src/
 - [x] **AC6 同步未被破坏**：`FINGERPRINT_TABLES`、`FINGERPRINT_ALGORITHM_VERSION` 与 `sites` 列集合均无变化；同一份数据在改动前后计算出的指纹差异**只**来自真实业务值变化。
       > 证据：`sync.rs` 本任务零改动；`migrate.rs:61` 建表列与 `:209-210` 增量 `ALTER` 均在（**物理列集合不变**才是指纹的输入，指纹走 `SELECT *`）；`repo/site.rs` 的 `SITE_SELECT` 不再**读**该列（23 列，`row.get` 位序同步收缩），写入侧同样不再带它。
 - [x] **AC7 UI 无残留**：应用中心目标侧栏、托盘子菜单、MCP / 代理 / 全局约束 / 设置四处目标勾选均不再出现 ZCode；托盘子菜单顺序无错位。
-      > 证据级别：**代码 + 单元/组件测试**（`TAB_KEYS` 4 项、四处 `TARGETS` 数组 4 项、`MENU_ICONS` 无 zcode、托盘 tooltip 断言 `!contains("ZCode")` 且行数 5）。打包版已在本机安装并启动（`lib.rs::setup` 在真实库上跑通，详见 `implement.md` 5.5），但**界面并未经肉眼核对** —— 本机 computer-use 点击落不进 WebView2 内容区，截图走降级路径，拿不到可信的界面证据。勾选仅代表前一级证据，不代表看过界面。
+      > 证据级别：**代码 + 单元/组件测试**（`TAB_KEYS` 4 项、四处 `TARGETS` 数组 4 项、`MENU_ICONS` 无 zcode、托盘 tooltip 断言 `!contains("ZCode")` 且行数 5）**+ 真机渲染走查**：打包版已安装启动，且用 `pnpm dev` 在真浏览器里逐页扫渲染后的 `outerHTML`（六页 + 设置五节）→ `zcode` **零命中**，每页目标复选框集合实测恰为 Claude Code / Codex / Pi / Prime，含 MCP「手动添加」弹窗、全局约束「生效目标」、本地代理、设置「路径」覆盖。**唯一未取得的仍是托盘子菜单的肉眼证据**（原生菜单，浏览器覆盖不到，本机 computer-use 点击落不进 WebView2）—— 该项由 `build_menu` 逐目标硬写 + `TraySnapshot` 字段已删（编译期保证）+ `tray.rs:747` 断言支撑，别当看过界面。
 - [x] **AC8 文案无残留**：中英双侧 zcode 键删除后无裸 key 渲染；两文件键集合仍对称。
       > 措辞修订（执行阶段决策，用户「彻底删干净」口径）：`apply.dualWarning` **不改为去掉 ZCode 提法，而是连同 `apply.dualWarningTitle` 一起删除** —— 两条都是全仓零引用的死键（`sites.goApply*` 同族里只有 `sites.goApply` 被 `GoApplyButton.tsx` 使用），给死键改文案不产生用户可见结果。同族其余死键不属本任务，保持原样。
       > 证据：脚本化删除前后键集只差 24 项、中英对称；`grep zcode src/i18n/locales/` 零命中；`pnpm test:run` 432 例无裸 key 断言失败。

@@ -119,13 +119,13 @@ pnpm test:run     # 432 passed / 0 failed，55 / 57 文件通过
 
 **顺带发现（未处理，超出本任务范围）**：`src/i18n/locales/{zh-CN,en-US}.json` 的顶层 `rules` 与 `proxy` 各出现两次（约 794/871、822/935 行），两份内容逐键相同，`JSON.parse` 后写覆盖前者 → **当前无行为影响**，但删键必须在 4 个块里各删一次才会真消失（本次已如此）。建议单独立任务合并。
 
-## 阶段 5：收尾核查 ✅ 已完成（5.5 部分完成，缺口见下）
+## 阶段 5：收尾核查 ✅ 全部完成（真机项见 5.5，托盘一项的证据级别已标注）
 
 - [x] 5.1 仓库级 grep（排除 `.git` / `node_modules` / 构建产物 / 各平台配置目录）后只剩：`zcode_retirement.rs`（本体）、`db/migrate.rs`（保留的 DDL + 挂载注释）、`lib.rs`（挂载点）、`backup.rs`（`parse_backup_id` 回归断言）、`tray.rs:747`（守门断言）、`repo/binding.rs`（注释）、`.gitignore` 与 `README*:193`（Trellis 的 `.zcode/`）。**写入型路径为零**。
 - [x] 5.2 `grep zcode src/i18n/locales/` —— 中英双侧零命中。
 - [x] 5.3 仓库根 `.zcode/` 未被删除；全仓库 `git status` 的 `D` 只有 3 条，都是本任务目标的源码文件。
 - [x] 5.4 `sites.zcode_api_type` 的建表列（`migrate.rs:61`）与增量 `ALTER`（`:209-210`）都在；`sync.rs` 本任务**零改动**（`FINGERPRINT_TABLES` 仍 9 项、`FINGERPRINT_ALGORITHM_VERSION` 仍 1）。
-- [ ] 5.5 **真机冒烟：启动路径已过、界面肉眼核对未做**。原状态是「没有跑起打包后的应用」，收尾时经用户要求在真机构建并安装了当前分支（HEAD `3c7c971`，其代码内容与 `cc9b437` 逐字节相同 —— 其后两个提交只动 `.trellis/`）。等价自动化覆盖：v0.1.5 形状夹具上的 `ensure_in_db`（27 例，含设置 blob / 三个 targets 数组 / 两类绑定行 / 列置空）、tempdir 假 `~/.zcode` 四类落点清理（含 BOM、块外内容、畸形标记）、托盘文案与线数断言。
+- [x] 5.5 **真机冒烟**：打包版已在本机构建 + 安装 + 启动，界面（除原生托盘）已逐页核对。原状态是「没有跑起打包后的应用」，收尾时经用户要求在真机构建并安装了当前分支（HEAD `3c7c971`，其代码内容与 `cc9b437` 逐字节相同 —— 其后两个提交只动 `.trellis/`）。等价自动化覆盖：v0.1.5 形状夹具上的 `ensure_in_db`（27 例，含设置 blob / 三个 targets 数组 / 两类绑定行 / 列置空）、tempdir 假 `~/.zcode` 四类落点清理（含 BOM、块外内容、畸形标记）、托盘文案与线数断言。
 
   **真机结果（2026-09-19，用户自己的机器与真实数据库）**：
   - 组装：`tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'`。关 `createUpdaterArtifacts` 是因为 `tauri.conf.json` 里它为 `true`，而 minisign 私钥只存在于 CI secret，本机没有 —— 不是配置问题，别照字面在本机跑默认配置。产物 `XiaoBaiSwitch Plus_0.1.5_x64-setup.exe`（9,143,754 B），静默安装退出码 0，落到 `D:\Program Files\XiaoBaiSwitch Plus\`。
@@ -134,9 +134,19 @@ pnpm test:run     # 432 passed / 0 failed，55 / 57 文件通过
   - 撤退清洗在干净存量上**零写入**（与 design §6 的预期一致）：以安装前 278 文件基线对比安装并运行后的 `~/.xiaobai-switch` + `~/.zcode`，新增 **0**、删除 **0**，主库 `xiaobai-switch.db` sha256 **不变**（只有 `-wal` / `-shm` 随正常读写变），`backups/` 下**没有** `zcode-retirement/` 快照目录 —— 清洗器判定无行可改，就没有触发那次「写前整库快照」。
   - 已知无害残留（真机复现了单测里的那条口径）：`zcodeHomeOverride` 虽已从 `AppSettings` 结构体删除，仍以 `"zcodeHomeOverride": null` 留在设置 blob 文本里（无 `deny_unknown_fields`，反序列化忽略未知键），blob 其余 25 键解析正常。它在下一次设置保存时被抹掉，不需处理。
   - `~/.zcode/v2/provider_config.json` 安装后确实变了，但改动方是 **ZCode 自己**（mtime 15:50:37，内容零 `xiaobai` 痕迹），与本任务无关，别记成撤退清洗写的。
-  - **仍缺**：AC7 的肉眼核对（四个目标的侧栏、托盘子菜单顺序、MCP / 代理 / 全局约束 / 设置四处勾选）。computer-use 在本机 DPI 下点击落不进 WebView2 内容区，截图又走 `gdi-printwindow-fallback`（WGC 返回黑帧），拿不到可信的界面证据 —— **不用「跑起来没报错」冒充「看过界面」**。AC7 在 prd 里的证据级别仍是代码 + 组件测试。
+  - **AC7 已核对**（`pnpm dev` + 真浏览器跑同一套 React 组件，走 `browserMock` 层）：六个页面（站点 / 应用中心 / 技能 / MCP / 全局约束 / 本地代理）+ 设置五节逐页扫 `document.documentElement.outerHTML` 的 `/zcode/i` → **零命中**；每页目标复选框集合实测恰为 `Claude Code / Codex / Pi / Prime`；应用中心侧栏、MCP「手动添加」弹窗的「应用目标」、全局约束「生效目标」、本地代理目标组、设置「路径」节（原 ZCode 主目录覆盖项已消失）逐个抓到。驱动方式是 `evaluate_script` 里 JS `click()` —— 本机 computer-use 的坐标点击落不进 WebView2 内容区（DPI 缩放），指针级操作不可用，所以出的是 **DOM 证据**而非截图证据。
+  - **托盘子菜单仍无肉眼证据，只有结构性 + 断言证据**：`build_menu`（`tray.rs:299-314`）是**逐目标硬写**的状态行，ZCode 那行连同 `TraySnapshot` 的对应字段一并删了 —— 没有字段可渲染，属编译期保证；`tray.rs:747` 再断言行数与 tooltip。托盘是原生菜单，浏览器路径覆盖不到，本机也没抓到可信截图。**这一项别记成「看过界面」。**
   - 一处交接注意：本机装的这版 `tauri.conf.json` 里 `version` 仍为 `0.1.5`（本任务不升版本号），与 GitHub 上已发布的 0.1.5 同号。界面上看不出区别，只有文件哈希能分 —— 后续真正发版时版本号必须往前走，否则用户无从判断自己装的是哪个。
 - [x] 5.6 全量：`cargo test` 579/0/2、`pnpm typecheck` 零错误、`pnpm test:run` 432 passed。
+
+**发布说明：核实过生成机制，结论是不用手写文件**（收尾时按「还剩发布说明」查的）。Release 正文由 CI 的 `orhun/git-cliff-action@v4` + `cliff.toml` 生成（`args: --latest --strip header --offline`，即「最近一个 `v*` tag 之后」）：
+
+- 模板每条只取 **commit 主题行**（`commit.message | split(pat="\n") | first`）+ scope，按 `commit_parsers` 分组。所以用户会看到的那一行就是 `feat(targets)!: 移除 ZCode 应用目标，存量与落盘痕迹一次性收口` → 归入「🚀 新功能」；`!` **不会**渲染成 BREAKING 标记（模板不读 `breaking_description`），破坏性只能靠主题行自己说清 —— 本条的「一次性收口」已表达了「无过渡版本、升级即清洗」。
+- 仓库里没有 CHANGELOG 文件，也不该新增：正文全新生成，手写不进流水线。
+- 两个流水线事实供发版时决策，本任务不动：① `filter_unconventional = false` 且 `^chore` / `^docs` / `^style` 都有分组，本次 6 条提交里 4 条内部提交（trellis 文档、归档、日志、clippy 样式）会原样进用户可见的发布说明；② `publish-release` 会用同一份生成内容**覆写**草稿正文，所以在 GitHub 上手工编辑草稿是白改 —— 要加人工说明只能往 commit 主题或 `cliff.toml` 里想。
+- 本机未装 `git-cliff`（不静默装系统依赖），以上是按模板人肉推的，**不是渲染实测**。
+
+**顺带发现（未处理，与本任务无关）**：真机 DOM 走查时看到两处用户可见文案只列了三个目标 —— `app.tagline`（zh「一键接入 Claude Code / Codex / Pi」/ en "…for Claude Code, Codex & Pi"）与 `onboarding.welcomeDesc`（zh「接入 Claude Code、Codex 或 Pi。」/ en "…for Claude Code, Codex, or Pi."），中英**双侧都漏了 Prime**。`git log -L` 证明这两行停在 `fe5c8e8`（接 Pi 那版），是 **Prime 落地时漏改**，不是本任务删 ZCode 删坏的。建议单独小任务补。
 
 **工具链核查（收尾时经用户批准 `rustup component add clippy rustfmt`：clippy 0.1.98 / rustfmt 1.9.0-stable）**：两项都按「只算本任务引入的增量」口径做，不做全仓清洗。
 
