@@ -119,13 +119,23 @@ pnpm test:run     # 432 passed / 0 failed，55 / 57 文件通过
 
 **顺带发现（未处理，超出本任务范围）**：`src/i18n/locales/{zh-CN,en-US}.json` 的顶层 `rules` 与 `proxy` 各出现两次（约 794/871、822/935 行），两份内容逐键相同，`JSON.parse` 后写覆盖前者 → **当前无行为影响**，但删键必须在 4 个块里各删一次才会真消失（本次已如此）。建议单独立任务合并。
 
-## 阶段 5：收尾核查 ✅ 已完成（5.5 除外）
+## 阶段 5：收尾核查 ✅ 已完成（5.5 部分完成，缺口见下）
 
 - [x] 5.1 仓库级 grep（排除 `.git` / `node_modules` / 构建产物 / 各平台配置目录）后只剩：`zcode_retirement.rs`（本体）、`db/migrate.rs`（保留的 DDL + 挂载注释）、`lib.rs`（挂载点）、`backup.rs`（`parse_backup_id` 回归断言）、`tray.rs:747`（守门断言）、`repo/binding.rs`（注释）、`.gitignore` 与 `README*:193`（Trellis 的 `.zcode/`）。**写入型路径为零**。
 - [x] 5.2 `grep zcode src/i18n/locales/` —— 中英双侧零命中。
 - [x] 5.3 仓库根 `.zcode/` 未被删除；全仓库 `git status` 的 `D` 只有 3 条，都是本任务目标的源码文件。
 - [x] 5.4 `sites.zcode_api_type` 的建表列（`migrate.rs:61`）与增量 `ALTER`（`:209-210`）都在；`sync.rs` 本任务**零改动**（`FINGERPRINT_TABLES` 仍 9 项、`FINGERPRINT_ALGORITHM_VERSION` 仍 1）。
-- [ ] 5.5 **真机 GUI 冒烟未做** —— 没有跑起打包后的应用去点界面。等价自动化覆盖：v0.1.5 形状夹具上的 `ensure_in_db`（27 例，含设置 blob / 三个 targets 数组 / 两类绑定行 / 列置空）、tempdir 假 `~/.zcode` 四类落点清理（含 BOM、块外内容、畸形标记）、托盘文案与线数断言。剩余缺口只在 `lib.rs::setup` 的真实启动路径。**不以此声称 5.5 通过。**
+- [ ] 5.5 **真机冒烟：启动路径已过、界面肉眼核对未做**。原状态是「没有跑起打包后的应用」，收尾时经用户要求在真机构建并安装了当前分支（HEAD `3c7c971`，其代码内容与 `cc9b437` 逐字节相同 —— 其后两个提交只动 `.trellis/`）。等价自动化覆盖：v0.1.5 形状夹具上的 `ensure_in_db`（27 例，含设置 blob / 三个 targets 数组 / 两类绑定行 / 列置空）、tempdir 假 `~/.zcode` 四类落点清理（含 BOM、块外内容、畸形标记）、托盘文案与线数断言。
+
+  **真机结果（2026-09-19，用户自己的机器与真实数据库）**：
+  - 组装：`tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'`。关 `createUpdaterArtifacts` 是因为 `tauri.conf.json` 里它为 `true`，而 minisign 私钥只存在于 CI secret，本机没有 —— 不是配置问题，别照字面在本机跑默认配置。产物 `XiaoBaiSwitch Plus_0.1.5_x64-setup.exe`（9,143,754 B），静默安装退出码 0，落到 `D:\Program Files\XiaoBaiSwitch Plus\`。
+  - 装后校验：安装目录的 `XiaoBaiSwitchPlus.exe` 与构建输出逐字节比对，差异**恰好 3 字节**（偏移 `0x144bd12`，`UNK` → `NSS`），即 NSIS 打包器往 PE 资源段打的补丁，不是代码差异。
+  - 启动：`lib.rs::setup` 的真实启动路径在**用户真实库**上跑通了 —— 应用起来了（托盘常驻，`visible: false`，二次启动走单实例回调 `restore_main_window`）。这是本任务唯一一条真机端到端证据，闭掉了 5.5 原本的「`setup` 未跑」缺口。
+  - 撤退清洗在干净存量上**零写入**（与 design §6 的预期一致）：以安装前 278 文件基线对比安装并运行后的 `~/.xiaobai-switch` + `~/.zcode`，新增 **0**、删除 **0**，主库 `xiaobai-switch.db` sha256 **不变**（只有 `-wal` / `-shm` 随正常读写变），`backups/` 下**没有** `zcode-retirement/` 快照目录 —— 清洗器判定无行可改，就没有触发那次「写前整库快照」。
+  - 已知无害残留（真机复现了单测里的那条口径）：`zcodeHomeOverride` 虽已从 `AppSettings` 结构体删除，仍以 `"zcodeHomeOverride": null` 留在设置 blob 文本里（无 `deny_unknown_fields`，反序列化忽略未知键），blob 其余 25 键解析正常。它在下一次设置保存时被抹掉，不需处理。
+  - `~/.zcode/v2/provider_config.json` 安装后确实变了，但改动方是 **ZCode 自己**（mtime 15:50:37，内容零 `xiaobai` 痕迹），与本任务无关，别记成撤退清洗写的。
+  - **仍缺**：AC7 的肉眼核对（四个目标的侧栏、托盘子菜单顺序、MCP / 代理 / 全局约束 / 设置四处勾选）。computer-use 在本机 DPI 下点击落不进 WebView2 内容区，截图又走 `gdi-printwindow-fallback`（WGC 返回黑帧），拿不到可信的界面证据 —— **不用「跑起来没报错」冒充「看过界面」**。AC7 在 prd 里的证据级别仍是代码 + 组件测试。
+  - 一处交接注意：本机装的这版 `tauri.conf.json` 里 `version` 仍为 `0.1.5`（本任务不升版本号），与 GitHub 上已发布的 0.1.5 同号。界面上看不出区别，只有文件哈希能分 —— 后续真正发版时版本号必须往前走，否则用户无从判断自己装的是哪个。
 - [x] 5.6 全量：`cargo test` 579/0/2、`pnpm typecheck` 零错误、`pnpm test:run` 432 passed。
 
 **工具链核查（收尾时经用户批准 `rustup component add clippy rustfmt`：clippy 0.1.98 / rustfmt 1.9.0-stable）**：两项都按「只算本任务引入的增量」口径做，不做全仓清洗。
