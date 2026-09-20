@@ -251,6 +251,31 @@ svg.lucide {
   transition: opacity 140ms ease;
 }
 
+/* 站点行刷新指示器：进入淡入 + 缩放（0.2s），退出同样 0.2s，旋转由 Tailwind animate-spin 负责。 */
+@keyframes site-refresh-indicator-in {
+  from {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.site-refresh-indicator {
+  animation: site-refresh-indicator-in 200ms ease;
+}
+
+.site-refresh-indicator[data-leaving="true"] {
+  opacity: 0;
+  transform: scale(0.8);
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+  animation: none;
+}
+
 .site-list-item:hover .site-more-btn,
 .site-list-item:focus-within .site-more-btn,
 .site-list-item .site-more-btn.ant-dropdown-open,
@@ -319,6 +344,12 @@ svg.lucide {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .site-refresh-indicator,
+  .site-refresh-indicator[data-leaving="true"] {
+    animation: none;
+    transition: none;
+  }
+
   .go-apply-swap {
     transition: none;
   }

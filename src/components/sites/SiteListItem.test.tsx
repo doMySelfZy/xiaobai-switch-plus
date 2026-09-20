@@ -328,4 +328,40 @@ describe("SiteListItem quota summary", () => {
     });
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("shows a primary spinning indicator before the switch while the site refreshes", async () => {
+    const site = await seedSite();
+    act(() => {
+      useSiteStore.setState({ refreshingSiteIds: [site.id] });
+    });
+    const { unmount } = renderListItem(site);
+    // Flush the async SiteAvatar icon resolution so its setState stays in act.
+    await act(async () => {});
+
+    const indicator = await screen.findByTestId("site-refreshing-indicator");
+    expect(indicator.getAttribute("width")).toBe("16");
+    expect(toRgb(indicator.style.color)).toBe(toRgb(token.colorPrimary));
+    // 指示器在开关左侧：DOM 顺序上先于启用开关。
+    const toggle = screen.getByLabelText("启用");
+    expect(
+      // eslint-disable-next-line no-bitwise
+      indicator.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    unmount();
+    act(() => {
+      useSiteStore.setState({ refreshingSiteIds: [] });
+    });
+  });
+
+  it("hides the refresh indicator once the site settles", async () => {
+    const site = await seedSite();
+    act(() => {
+      useSiteStore.setState({ refreshingSiteIds: [] });
+    });
+    const { unmount } = renderListItem(site);
+    await act(async () => {});
+
+    expect(screen.queryByTestId("site-refreshing-indicator")).toBeNull();
+    unmount();
+  });
 });

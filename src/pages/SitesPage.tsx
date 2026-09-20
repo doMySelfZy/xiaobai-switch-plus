@@ -55,7 +55,8 @@ export function SitesPage() {
   const refreshingAll = useSiteStore((s) => s.refreshingAll);
   const loadSites = useSiteStore((s) => s.loadSites);
   const listModels = useSiteStore((s) => s.listModels);
-  const fetchModels = useSiteStore((s) => s.fetchModels);
+  const refreshSiteModelsAndQuota = useSiteStore((s) => s.refreshSiteModelsAndQuota);
+  const refreshSiteQuota = useSiteStore((s) => s.refreshSiteQuota);
   const refreshAllSites = useSiteStore((s) => s.refreshAllSites);
   const probeQuota = useSiteStore((s) => s.probeQuota);
   const quotaBySite = useSiteStore((s) => s.quotaBySite);
@@ -159,14 +160,26 @@ export function SitesPage() {
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [selected?.id, selected?.baseUrl, selected?.quotaRevision, selected?.hasKey, probeQuota, message, t]);
 
+  /**
+   * 详情页手动刷新单个站点：模型 + 余额同一轮等齐（与全局刷新同一套口径，
+   * 余额同样写后端缓存、悬浮窗能读到），列表行指示器跟着这一轮亮灭。
+   */
   const handleFetchModels = useCallback(
     async (site: Site) => {
       try {
-        const result = await fetchModels(site.id);
-        if (!site.selectedModelId && result.models[0]) {
-          await setSelectedModel(site.id, result.models[0].modelId);
+        const result = await refreshSiteModelsAndQuota(site.id);
+        if (!result.modelsOk) {
+          message.error(t("sites.modelListFetchRetry"));
+          return;
         }
-        message.success(t("sites.fetchModelsSuccess", { count: result.models.length }));
+        const models = useSiteStore.getState().modelsBySite[site.id] ?? [];
+        if (!site.selectedModelId && models[0]) {
+          await setSelectedModel(site.id, models[0].modelId);
+        }
+        message.success(t("sites.fetchModelsSuccess", { count: result.modelCount }));
+        if (!result.quotaOk) {
+          message.warning(t("sites.quotaRefreshFailed"));
+        }
       } catch (e) {
         message.error(
           isAppError(e)
@@ -177,20 +190,24 @@ export function SitesPage() {
         );
       }
     },
-    [fetchModels, setSelectedModel, message, t],
+    [refreshSiteModelsAndQuota, setSelectedModel, message, t],
   );
 
   const handleRefreshQuota = useCallback(async () => {
     if (!selected) return;
+    // 余额单刷走 refresh_site_quota（写后端悬浮窗余额缓存并 emit），不能用 probe：
+    // probe 只回给调用方，悬浮窗会静默读到旧值。指示器的进入 / 摘除收敛在
+    // refreshSiteQuota 里（与 refreshSiteModelsAndQuota 同一口径），这里只管提示。
+    const siteId = selected.id;
     try {
-      const result = await probeQuota(selected.id, { force: true });
+      const result = await refreshSiteQuota(siteId);
       if (result.status !== "available") {
         message.warning(t("sites.quotaRefreshFailed"));
       }
     } catch (e) {
       message.warning(isAppError(e) ? e.message : t("sites.quotaRefreshFailed"));
     }
-  }, [selected, probeQuota, message, t]);
+  }, [selected, refreshSiteQuota, message, t]);
 
   const handleRefreshAll = useCallback(async () => {
     try {

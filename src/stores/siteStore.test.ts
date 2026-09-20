@@ -719,4 +719,100 @@ describe("siteStore fetchModels", () => {
     expect(useSiteStore.getState().fetchingModelsBySite).toEqual({});
     expect(useSiteStore.getState().fetchingModels).toBe(false);
   });
+
+  it("refreshes one site's models and quota with a row indicator that always clears", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Solo",
+      baseUrl: "https://solo.example.com",
+      apiKey: fakeKey("solo"),
+    });
+
+    const run = useSiteStore.getState().refreshSiteModelsAndQuota(site.id);
+    // 手动单刷点亮该行指示器。
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([site.id]);
+
+    const result = await run;
+    expect(result).toEqual(
+      expect.objectContaining({ siteId: site.id, modelsOk: true, quotaOk: true }),
+    );
+    expect(result.modelCount).toBe(2);
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+    expect(useSiteStore.getState().modelsBySite[site.id]).toHaveLength(2);
+    expect(useSiteStore.getState().quotaBySite[site.id]?.status).toBe("available");
+  });
+
+  it("clears a single site's indicator and records the attempt when its quota rejects", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Flaky",
+      baseUrl: "https://flaky.example.com",
+      apiKey: fakeKey("flaky"),
+    });
+    setBrowserQuotaProbeHandler(() =>
+      Promise.reject({ code: "network_error", message: "connection refused" }),
+    );
+
+    const result = await useSiteStore.getState().refreshSiteModelsAndQuota(site.id);
+
+    expect(result.modelsOk).toBe(true);
+    expect(result.quotaOk).toBe(false);
+    // 失败也必须灭灯，不能卡住。
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+    expect(useSiteStore.getState().quotaAttemptBySite[site.id]?.error).toBe(
+      "connection refused",
+    );
+    expect(useSiteStore.getState().quotaBySite[site.id]).toBeUndefined();
+  });
+
+  it("keeps a concurrent single-refresh id across a global run", async () => {
+    const enabled = await useSiteStore.getState().createSite({
+      name: "Relay",
+      baseUrl: "https://relay.example.com",
+      apiKey: fakeKey("relay"),
+    });
+    // 模拟详情页手动单刷先进入集合，随后全局刷新启动：必须并集，不能整体覆盖洗掉它。
+    useSiteStore.setState({ refreshingSiteIds: ["manual-extra"] });
+    const run = useSiteStore.getState().refreshAllSites();
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual(
+      expect.arrayContaining(["manual-extra", enabled.id]),
+    );
+
+    await run;
+    // 全局 finally 只摘除本轮 runIds，与本轮无关的单刷 id 原样保留。
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual(["manual-extra"]);
+    useSiteStore.getState().clearRefreshingSiteId("manual-extra");
+  });
+
+  it("refreshes a single quota through refresh_site_quota and notifies the floating window", async () => {
+    const site = await useSiteStore.getState().createSite({
+      name: "Solo",
+      baseUrl: "https://solo.example.com",
+      apiKey: fakeKey("solo"),
+    });
+
+    const run = useSiteStore.getState().refreshSiteQuota(site.id);
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([site.id]);
+
+    const quota = await run;
+    expect(quota.status).toBe("available");
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+    expect(useSiteStore.getState().quotaBySite[site.id]?.status).toBe("available");
+    expect(getBrowserQuotaProbeCallCount()).toBe(1);
+  });
+
+  it("replaces, removes, and resets the refreshing set", () => {
+    const state = useSiteStore.getState();
+    state.setRefreshingSiteIds(["a", "b"]);
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual(["a", "b"]);
+    // setRefreshingSiteIds 本身仍是覆盖语义（兜底 / 测试用）；全局启动的并集合并
+    // 在 refreshAllSites 里做，不在这里。
+    state.setRefreshingSiteIds(["c"]);
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual(["c"]);
+    state.clearRefreshingSiteId("missing");
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual(["c"]);
+    state.clearRefreshingSiteId("c");
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+    state.setRefreshingSiteIds(["x"]);
+    state.clearAllRefreshingStatus();
+    expect(useSiteStore.getState().refreshingSiteIds).toEqual([]);
+  });
 });

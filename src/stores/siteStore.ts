@@ -110,6 +110,28 @@ interface SiteState {
   reorderSites: (ids: string[]) => Promise<void>;
   fetchModels: (siteId: string, apiKeyId?: string | null) => Promise<FetchModelsResult>;
   refreshAllSites: () => Promise<RefreshAllSitesResult>;
+  /**
+   * 单个站点的统一刷新（模型 + 余额），供详情页手动刷新使用。
+   * 开始时把站点加入 `refreshingSiteIds`，结束（无论成功失败）时摘除，
+   * 列表行指示器跟着这一轮走。
+   */
+  refreshSiteModelsAndQuota: (siteId: string) => Promise<RefreshSiteResult>;
+  /**
+   * 单个站点的余额单刷，供详情页余额行手动刷新使用。
+   * 与 `probeQuota` 不同：走 `refresh_site_quota`（写后端悬浮窗余额缓存），
+   * 完成后 emit `sites-refresh-finished` 通知悬浮窗重读，与统一刷新同一口径。
+   * 指示器同样走 `refreshingSiteIds`（累加进入、finally 摘除），失败也不卡住。
+   */
+  refreshSiteQuota: (siteId: string) => Promise<SiteQuota>;
+  /**
+   * 覆盖整个刷新集合（仅兜底 / 测试用）。
+   * 全局刷新启动不再用它整体替换，而是并集合并，避免洗掉并发的单刷 id。
+   */
+  setRefreshingSiteIds: (ids: string[]) => void;
+  /** 摘除单个站点的刷新状态（该站点一轮结束时调用，失败也必须调用）。 */
+  clearRefreshingSiteId: (id: string) => void;
+  /** 清空全部刷新状态（兜底 / 重置用）。 */
+  clearAllRefreshingStatus: () => void;
   listModels: (siteId: string, opts?: { force?: boolean }) => Promise<SiteModel[]>;
   probeQuota: (siteId: string, opts?: { force?: boolean }) => Promise<SiteQuota>;
   setSelectedModel: (siteId: string, modelId: string) => Promise<void>;
@@ -184,6 +206,87 @@ async function mapWithConcurrency<T, R>(
     Array.from({ length: Math.min(limit, items.length) }, () => runWorker()),
   );
   return results;
+}
+
+type SiteStoreSet = (
+  partial: Partial<SiteState> | ((state: SiteState) => Partial<SiteState>),
+) => void;
+type SiteStoreGet = () => SiteState;
+
+/**
+ * 单个站点的一轮刷新 = 模型 + 余额两件事，在同一个 worker 里等齐。
+ *
+ * 余额走 `refresh_site_quota` 而不是 `probe_site_quota`：前者顺带写后端余额缓存，
+ * 悬浮窗只读那份缓存（跨 webview 拿不到这里的 zustand 状态）。
+ * 指示器摘除（含最短露出）统一收敛在这里，调用方只负责把站点加进
+ * `refreshingSiteIds`；摘除放在 `finally`，失败也不会卡住。
+ */
+async function refreshOneSite(
+  get: SiteStoreGet,
+  set: SiteStoreSet,
+  id: string,
+  apiKeyId: string | null,
+  quotaKey: string,
+): Promise<RefreshSiteResult> {
+  const startTime = Date.now();
+  try {
+    const [model, quota] = await Promise.all([
+      get()
+        .fetchModels(id, apiKeyId)
+        .then(
+          (result) => ({ modelCount: result.models.length, error: null }),
+          (error) => ({ modelCount: 0, error: errorMessage(error) }),
+        ),
+      invoke<SiteQuota>("refresh_site_quota", { siteId: id }).then(
+        (value) => ({ value, error: null }),
+        (error) => ({ value: null, error: errorMessage(error) }),
+      ),
+    ]);
+
+    const current = get().sites.find((site) => site.id === id);
+    // reject 也要留下尝试记录，否则连不上的站点在列表里永远是空白一行。
+    const attempt =
+      quota.value ?? errorQuotaAttempt(quota.error ?? "quota refresh failed");
+    const quotaOk =
+      quota.error === null && attempt.status === "available" && !attempt.error;
+    // 站点配置在这轮里被改过（换密钥 / 换 Base URL）就不写回，避免旧响应覆盖新状态。
+    if (current && quotaKey === quotaCacheKey(current)) {
+      set({
+        quotaAttemptBySite: { ...get().quotaAttemptBySite, [id]: attempt },
+        quotaAttemptCacheKeyBySite: {
+          ...get().quotaAttemptCacheKeyBySite,
+          [id]: quotaKey,
+        },
+        ...(attempt.status === "available"
+          ? {
+              quotaBySite: { ...get().quotaBySite, [id]: attempt },
+              quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [id]: quotaKey },
+            }
+          : {}),
+      });
+    }
+
+    return {
+      siteId: id,
+      modelCount: model.modelCount,
+      modelsOk: model.error === null,
+      quotaOk,
+      modelError: model.error,
+      quotaError:
+        quota.error ?? quota.value?.error ?? (quotaOk ? null : "quota refresh failed"),
+    } satisfies RefreshSiteResult;
+  } finally {
+    // 指示器至少露一面：两阶段都命中缓存时整轮可能连一帧都不到。
+    const elapsed = Date.now() - startTime;
+    if (elapsed < MIN_REFRESH_INDICATOR_MS) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, MIN_REFRESH_INDICATOR_MS - elapsed),
+      );
+    }
+    set((state) => ({
+      refreshingSiteIds: state.refreshingSiteIds.filter((siteId) => siteId !== id),
+    }));
+  }
 }
 
 function clearSiteQuotaState(state: SiteState, siteId: string) {
@@ -519,74 +622,22 @@ export const useSiteStore = create<SiteState>((set, get) => ({
           quotaKey: quotaCacheKey(site),
         }));
 
-      set({ refreshingAll: true, refreshingSiteIds: enabledSites.map((site) => site.id) });
+      const runIds = enabledSites.map((site) => site.id);
+      // 并集合并：全局启动时可能有并发的单刷 id 在集合里（详情页手动单刷），
+      // 整体覆盖会把它洗掉。finally 只摘除本轮 runIds，与单刷互不干扰。
+      set((state) => ({
+        refreshingSiteIds: Array.from(new Set([...state.refreshingSiteIds, ...runIds])),
+      }));
+      set({ refreshingAll: true });
       try {
         // 一个站点的一轮刷新 = 模型 + 余额两件事，所以两阶段必须在同一个 worker 里等齐：
         // 余额曾经走批量命令、在模型循环之后才 await，于是所有行都停止转圈了头部按钮还在转。
-        // `refresh_site_quota` 而不是 `probe_site_quota`：前者顺带写后端余额缓存，
-        // 悬浮窗只读那份缓存（跨 webview 拿不到这里的 zustand 状态）。
+        // 单站逻辑收敛在 `refreshOneSite`，全局与手动单刷共用一套口径。
         const sites = await mapWithConcurrency(
           enabledSites,
           MAX_MODEL_REFRESH_CONCURRENCY,
-          async ({ id, apiKeyId, quotaKey }) => {
-            const startTime = Date.now();
-            const [model, quota] = await Promise.all([
-              get()
-                .fetchModels(id, apiKeyId)
-                .then(
-                  (result) => ({ modelCount: result.models.length, error: null }),
-                  (error) => ({ modelCount: 0, error: errorMessage(error) }),
-                ),
-              invoke<SiteQuota>("refresh_site_quota", { siteId: id }).then(
-                (value) => ({ value, error: null }),
-                (error) => ({ value: null, error: errorMessage(error) }),
-              ),
-            ]);
-
-            const current = get().sites.find((site) => site.id === id);
-            // reject 也要留下尝试记录，否则连不上的站点在列表里永远是空白一行。
-            const attempt =
-              quota.value ?? errorQuotaAttempt(quota.error ?? "quota refresh failed");
-            const quotaOk =
-              quota.error === null && attempt.status === "available" && !attempt.error;
-            // 站点配置在这轮里被改过（换密钥 / 换 Base URL）就不写回，避免旧响应覆盖新状态。
-            if (current && quotaKey === quotaCacheKey(current)) {
-              set({
-                quotaAttemptBySite: { ...get().quotaAttemptBySite, [id]: attempt },
-                quotaAttemptCacheKeyBySite: {
-                  ...get().quotaAttemptCacheKeyBySite,
-                  [id]: quotaKey,
-                },
-                ...(attempt.status === "available"
-                  ? {
-                      quotaBySite: { ...get().quotaBySite, [id]: attempt },
-                      quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [id]: quotaKey },
-                    }
-                  : {}),
-              });
-            }
-
-            // 指示器至少露一面：两阶段都命中缓存时整轮可能连一帧都不到。
-            const elapsed = Date.now() - startTime;
-            if (elapsed < MIN_REFRESH_INDICATOR_MS) {
-              await new Promise((resolve) =>
-                setTimeout(resolve, MIN_REFRESH_INDICATOR_MS - elapsed),
-              );
-            }
-            set((state) => ({
-              refreshingSiteIds: state.refreshingSiteIds.filter((siteId) => siteId !== id),
-            }));
-
-            return {
-              siteId: id,
-              modelCount: model.modelCount,
-              modelsOk: model.error === null,
-              quotaOk,
-              modelError: model.error,
-              quotaError:
-                quota.error ?? quota.value?.error ?? (quotaOk ? null : "quota refresh failed"),
-            } satisfies RefreshSiteResult;
-          },
+          async ({ id, apiKeyId, quotaKey }) =>
+            refreshOneSite(get, set, id, apiKeyId, quotaKey),
         );
         const successCount = sites.filter((site) => site.modelsOk && site.quotaOk).length;
         const result = {
@@ -597,7 +648,14 @@ export const useSiteStore = create<SiteState>((set, get) => ({
         await emitSitesRefreshFinished();
         return result;
       } finally {
-        set({ refreshingAll: false });
+        // worker 的 finally 已逐站摘除，这里只做兜底：本轮还有残留才清掉，
+        // 与本轮无关的并发单刷 id 不受影响。
+        set((state) => ({
+          refreshingAll: false,
+          refreshingSiteIds: state.refreshingSiteIds.filter(
+            (siteId) => !runIds.includes(siteId),
+          ),
+        }));
       }
     })();
 
@@ -607,6 +665,111 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     };
     void run.then(clearInflight, clearInflight);
     return run;
+  },
+  refreshSiteModelsAndQuota: async (siteId) => {
+    const site = get().sites.find((entry) => entry.id === siteId);
+    const apiKeyId = activeApiKeyId(site ?? null);
+    const quotaKey = site ? quotaCacheKey(site) : "";
+    // 累加而不是覆盖：全局刷新进行中时手动单刷不能把其它站点的指示器洗掉。
+    set((state) => ({
+      refreshingSiteIds: state.refreshingSiteIds.includes(siteId)
+        ? state.refreshingSiteIds
+        : [...state.refreshingSiteIds, siteId],
+    }));
+    try {
+      const result = await refreshOneSite(get, set, siteId, apiKeyId, quotaKey);
+      // 单站余额同样写进了后端缓存，通知悬浮窗重读。
+      await emitSitesRefreshFinished();
+      return result;
+    } finally {
+      // refreshOneSite 的 finally 已摘除一次，这里再保一次底：失败也必须灭灯。
+      get().clearRefreshingSiteId(siteId);
+    }
+  },
+  refreshSiteQuota: async (siteId) => {
+    const site = get().sites.find((entry) => entry.id === siteId);
+    if (!site) {
+      throw { code: "not_found", message: "site not found" };
+    }
+    const quotaKey = quotaCacheKey(site);
+    // 与 refreshSiteModelsAndQuota 同一口径：累加进入，finally 摘除，失败也不卡住。
+    set((state) => ({
+      refreshingSiteIds: state.refreshingSiteIds.includes(siteId)
+        ? state.refreshingSiteIds
+        : [...state.refreshingSiteIds, siteId],
+    }));
+    set({
+      quotaLoadingBySite: { ...get().quotaLoadingBySite, [siteId]: true },
+    });
+    const startTime = Date.now();
+    const storeIfCurrent = (quota: SiteQuota): SiteQuota => {
+      const current = get().sites.find((entry) => entry.id === siteId);
+      if (current && quotaCacheKey(current) === quotaKey) {
+        set({
+          quotaAttemptBySite: { ...get().quotaAttemptBySite, [siteId]: quota },
+          quotaAttemptCacheKeyBySite: {
+            ...get().quotaAttemptCacheKeyBySite,
+            [siteId]: quotaKey,
+          },
+          ...(quota.status === "available"
+            ? {
+                quotaBySite: { ...get().quotaBySite, [siteId]: quota },
+                quotaCacheKeyBySite: { ...get().quotaCacheKeyBySite, [siteId]: quotaKey },
+              }
+            : {}),
+        });
+      }
+      return quota;
+    };
+    try {
+      // 余额单刷必须走 refresh_site_quota（写后端悬浮窗余额缓存），不能用 probe：
+      // probe 只回给调用方，悬浮窗会静默读到旧值（见 state-management.md）。
+      // 刻意不复用 quotaInflight：那是 probe 的去重池，复用会让单刷 join 到一次
+      // 不写缓存的 probe 请求上，同样读到旧值。
+      const quota = await invoke<SiteQuota>("refresh_site_quota", { siteId });
+      const stored = storeIfCurrent(quota);
+      await emitSitesRefreshFinished();
+      return stored;
+    } catch (e) {
+      // 命令 reject 也要留下尝试记录并通知悬浮窗（后端失败时同样写了带 error 的缓存），
+      // 调用方按 probeQuota 的口径拿到 error 尝试而不是异常。
+      const attempt = storeIfCurrent(errorQuotaAttempt(errorMessage(e)));
+      await emitSitesRefreshFinished();
+      return attempt;
+    } finally {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < MIN_REFRESH_INDICATOR_MS) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, MIN_REFRESH_INDICATOR_MS - elapsed),
+        );
+      }
+      set((state) => ({
+        refreshingSiteIds: state.refreshingSiteIds.filter((entry) => entry !== siteId),
+      }));
+      const current = get().sites.find((entry) => entry.id === siteId);
+      const loading = { ...get().quotaLoadingBySite };
+      if (current) {
+        // probe 可能还在跑（两者是独立命令），别把它的 loading 一起灭掉。
+        loading[siteId] = quotaInflight.has(quotaCacheKey(current));
+        if (!loading[siteId]) delete loading[siteId];
+      } else {
+        delete loading[siteId];
+      }
+      set({ quotaLoadingBySite: loading });
+    }
+  },
+  setRefreshingSiteIds: (ids) => {
+    set({ refreshingSiteIds: [...ids] });
+  },
+  clearRefreshingSiteId: (id) => {
+    set((state) =>
+      state.refreshingSiteIds.includes(id)
+        ? { refreshingSiteIds: state.refreshingSiteIds.filter((siteId) => siteId !== id) }
+        : {},
+    );
+  },
+  clearAllRefreshingStatus: () => {
+    set((state) => (state.refreshingSiteIds.length === 0 ? {} : { refreshingSiteIds: [] }));
   },
   listModels: async (siteId, opts) => {
     const site = get().sites.find((s) => s.id === siteId);

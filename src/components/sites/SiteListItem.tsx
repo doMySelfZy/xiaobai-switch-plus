@@ -2,9 +2,9 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { Button, Dropdown, Switch, Tooltip, theme } from "antd";
 import type { MenuProps } from "antd";
-import { Ellipsis, GripVertical, Loader2, Pencil, Trash2 } from "lucide-react";
+import { Ellipsis, GripVertical, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Site } from "@/types/domain";
 import { StatusDot } from "@/components/StatusDot";
 import { SiteAvatar } from "@/components/sites/SiteAvatar";
@@ -47,8 +47,28 @@ export function SiteListItem({
   const modelsBySite = useSiteStore((s) => s.modelsBySite);
   const refreshingSiteIds = useSiteStore((s) => s.refreshingSiteIds);
   const fetchingModelsBySite = useSiteStore((s) => s.fetchingModelsBySite);
-  // 站点正在刷新 = 全局刷新中包含该站点 或 单独刷新该站点的模型
+  // 站点正在刷新 = 全局 / 单刷轮次包含该站点，或该站点模型正在拉取。
+  // 注：含 fetchingModelsBySite 是延续行为（切换密钥等只拉模型的动作也亮灯），
+  // 本任务保持该口径不变，只在其上加退出过渡。
   const isRefreshing = refreshingSiteIds.includes(site.id) || Boolean(fetchingModelsBySite[site.id]);
+  // 退出过渡：isRefreshing 变 false 后多留 200ms 做淡出 + 缩放，结束再卸载。
+  // 闲时仍条件渲染（不占位），进入动画沿用 CSS 的 site-refresh-indicator-in。
+  const [indicatorVisible, setIndicatorVisible] = useState(isRefreshing);
+  const [indicatorLeaving, setIndicatorLeaving] = useState(false);
+  useEffect(() => {
+    if (isRefreshing) {
+      setIndicatorVisible(true);
+      setIndicatorLeaving(false);
+      return;
+    }
+    if (!indicatorVisible) return;
+    setIndicatorLeaving(true);
+    const timer = setTimeout(() => {
+      setIndicatorVisible(false);
+      setIndicatorLeaving(false);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [isRefreshing, indicatorVisible]);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: site.id,
   });
@@ -272,19 +292,28 @@ export function SiteListItem({
                   title={statusTitle}
                 />
                 <div className="truncate text-sm font-medium">{site.name}</div>
-                {isRefreshing && (
-                  <Loader2
-                    size={14}
-                    className="shrink-0 animate-spin"
-                    style={{ color: token.colorTextTertiary }}
-                    data-testid="site-refreshing-indicator"
-                  />
-                )}
               </div>
               {/* 第二行固定高度：站点没有额度摘要时也占位，列表行高保持整齐 */}
               <div className="min-h-5 min-w-0">{quotaSummary}</div>
             </div>
           </button>
+          {/* 全局 / 手动刷新时该站点右侧的独立指示器：转圈 = 本轮模型 + 余额还没等齐，
+              完成即消失。条件渲染（不占位），进入 0.2s 淡入 + 缩放，退出同样 0.2s。 */}
+          {indicatorVisible && (
+            <span
+              className="site-refresh-indicator inline-flex shrink-0 items-center justify-center"
+              data-leaving={indicatorLeaving ? "true" : "false"}
+              style={{ width: 20, height: 20, marginRight: 12 }}
+              aria-hidden="true"
+            >
+              <RefreshCw
+                size={16}
+                className="animate-spin"
+                style={{ color: token.colorPrimary }}
+                data-testid="site-refreshing-indicator"
+              />
+            </span>
+          )}
           {/* 列表里直接开关：禁用后不再探测额度、不参与模型获取、也不出现在悬浮窗，
               所以不必先点进详情页才能关掉某个不想用的站点。 */}
           <Tooltip title={site.enabled ? t("sites.disabledHint") : t("sites.enabledHint")}>
