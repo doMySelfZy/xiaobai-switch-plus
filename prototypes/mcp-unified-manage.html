@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 统一管理 · 交互原型</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #1677ff; --primary-hover: #4096ff; --primary-bg: #e6f4ff;
+    --bg: #f5f5f5; --card: #ffffff;
+    --border: #e8e8e8; --border-2: #d9d9d9;
+    --text: #1f1f1f; --text-2: #595959; --text-3: #8c8c8c;
+    --green: #52c41a; --green-bg: #f6ffed; --green-border: #b7eb8f; --green-text: #389e0d;
+    --orange: #fa8c16; --orange-bg: #fff7e6; --orange-border: #ffd591; --orange-text: #d46b08;
+    --red: #ff4d4f; --red-bg: #fff1f0; --red-border: #ffa39e; --red-text: #cf1322;
+  }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Inter", sans-serif; background: var(--bg); color: var(--text); line-height: 1.55; font-size: 14px; }
+  .app { max-width: 940px; margin: 0 auto; padding: 20px 20px 60px; }
+
+  /* ---- page header ---- */
+  .page-head { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+  .page-head h1 { font-size: 20px; font-weight: 600; }
+  .page-head .upd-badge { font-size: 12px; padding: 1px 9px; border-radius: 20px; background: var(--orange-bg); color: var(--orange-text); border: 1px solid var(--orange-border); cursor: pointer; }
+  .page-desc { color: var(--text-3); font-size: 13px; margin-bottom: 16px; }
+
+  /* ---- toolbar ---- */
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  .search { flex: 1; min-width: 200px; position: relative; }
+  .search input { width: 100%; padding: 8px 12px 8px 34px; border: 1px solid var(--border-2); border-radius: 8px; font-size: 13px; background: #fff; }
+  .search svg { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--text-3); }
+  .seg { display: inline-flex; background: #f0f0f0; border-radius: 8px; padding: 2px; }
+  .seg button { border: none; background: none; padding: 5px 12px; font-size: 13px; border-radius: 6px; cursor: pointer; color: var(--text-2); }
+  .seg button.on { background: #fff; color: var(--primary); font-weight: 500; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .btn { border: 1px solid var(--border-2); background: #fff; border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all .15s; }
+  .btn:hover { border-color: var(--primary); color: var(--primary); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { background: var(--primary-hover); }
+  .btn.small { padding: 3px 10px; font-size: 12px; border-radius: 6px; }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+  .btn.ghost:hover { background: #f0f0f0; color: var(--text); }
+  .btn.danger:hover { border-color: var(--red-border); color: var(--red-text); }
+
+  /* ---- client legend ---- */
+  .legend { display: flex; gap: 16px; align-items: center; font-size: 12px; color: var(--text-3); margin-bottom: 14px; padding: 8px 14px; background: #fafafa; border: 1px dashed var(--border); border-radius: 8px; flex-wrap: wrap; }
+  .legend .ci { display: inline-flex; align-items: center; gap: 5px; }
+  .ci .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  /* ---- mcp card ---- */
+  .mcp { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; transition: border-color .15s, box-shadow .15s; }
+  .mcp:hover { border-color: #91caff; box-shadow: 0 2px 10px rgba(22,119,255,.06); }
+  .mcp.disabled { opacity: .6; }
+  .mcp.conflict { border-color: var(--orange-border); }
+  .mcp-top { display: flex; align-items: flex-start; gap: 12px; }
+  .mcp-id { flex: 1; min-width: 0; }
+  .mcp-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .mcp-name { font-weight: 600; font-size: 15px; }
+  .kind-tag { font-size: 11px; padding: 0 7px; border-radius: 4px; background: #f0f0f0; color: var(--text-2); font-family: Consolas, monospace; }
+  .mcp-cmd { display: block; background: #fafafa; border: 1px solid #f0f0f0; border-radius: 6px; font-size: 12px; padding: 4px 9px; margin-top: 8px; color: var(--text-2); font-family: Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mcp-master { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+  .mcp-actions { display: flex; gap: 2px; }
+  .icon-btn { width: 28px; height: 28px; border: none; background: none; border-radius: 6px; cursor: pointer; color: var(--text-3); display: inline-flex; align-items: center; justify-content: center; }
+  .icon-btn:hover { background: #f0f0f0; color: var(--text); }
+  .icon-btn.danger:hover { background: var(--red-bg); color: var(--red-text); }
+
+  /* ---- switch ---- */
+  .switch { position: relative; width: 36px; height: 20px; border-radius: 20px; border: none; cursor: pointer; background: var(--border-2); transition: background .15s; flex-shrink: 0; }
+  .switch.on { background: var(--primary); }
+  .switch::after { content: ""; position: absolute; width: 16px; height: 16px; background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .switch.on::after { left: 18px; }
+  .switch.sm { width: 30px; height: 17px; }
+  .switch.sm::after { width: 13px; height: 13px; }
+  .switch.sm.on::after { left: 15px; }
+
+  /* ---- client toggles row ---- */
+  .clients { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .client-toggle { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 6px 11px; cursor: pointer; user-select: none; background: #fff; transition: all .15s; min-width: 128px; }
+  .client-toggle:hover { border-color: var(--primary); }
+  .client-toggle.active { border-color: var(--primary); background: var(--primary-bg); }
+  .client-toggle.conflict { border-color: var(--orange-border); background: var(--orange-bg); }
+  .client-toggle .cname { display: flex; align-items: center; gap: 6px; font-size: 13px; flex: 1; }
+  .client-toggle .cname .dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .client-toggle .cstate { font-size: 11px; color: var(--text-3); }
+  .client-toggle.active .cstate { color: var(--primary); }
+  .client-toggle.conflict .cstate { color: var(--orange-text); font-weight: 500; }
+
+  /* ---- conflict banner ---- */
+  .conflict-banner { margin-top: 10px; background: var(--orange-bg); border: 1px solid var(--orange-border); border-radius: 8px; padding: 9px 12px; font-size: 12px; color: var(--orange-text); display: flex; gap: 10px; align-items: flex-start; }
+  .conflict-banner .cb-actions { margin-left: auto; display: flex; gap: 6px; flex-shrink: 0; }
+
+  /* ---- update banner on card ---- */
+  .upd-line { margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--orange-text); }
+
+  /* ---- section divider ---- */
+  .divider { display: flex; align-items: center; gap: 10px; margin: 22px 0 12px; color: var(--text-3); font-size: 12px; }
+  .divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+  /* ---- empty / secrets note ---- */
+  .note { background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 11px 14px; font-size: 12px; color: var(--text-3); display: flex; gap: 8px; align-items: flex-start; margin-top: 16px; }
+
+  /* ---- modal ---- */
+  .mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; width: 560px; max-width: 100%; max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+  .modal header { padding: 15px 20px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 15px; display: flex; align-items: center; justify-content: space-between; }
+  .modal header .x { cursor: pointer; color: var(--text-3); border: none; background: none; font-size: 18px; }
+  .modal .body { padding: 18px 20px; overflow-y: auto; }
+  .modal footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 13px; margin-bottom: 5px; font-weight: 500; }
+  .field input, .field select, .field textarea { width: 100%; border: 1px solid var(--border-2); border-radius: 8px; padding: 8px 11px; font-size: 13px; font-family: inherit; }
+  .field textarea { font-family: Consolas, monospace; }
+  .field .hint { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+
+  /* ---- source picker (add entry) ---- */
+  .source-tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .source-tab { flex: 1; border: 1px solid var(--border); border-radius: 10px; padding: 12px; cursor: pointer; text-align: center; transition: all .15s; }
+  .source-tab:hover { border-color: var(--primary); }
+  .source-tab.on { border-color: var(--primary); background: var(--primary-bg); }
+  .source-tab .st-icon { font-size: 20px; }
+  .source-tab .st-title { font-weight: 600; font-size: 13px; margin-top: 4px; }
+  .source-tab .st-desc { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+
+  .pane { display: none; }
+  .pane.on { display: block; }
+
+  /* registry result row */
+  .reg-row { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .reg-row .rr-main { flex: 1; min-width: 0; }
+  .reg-row .rr-name { font-weight: 600; }
+  .reg-row .rr-desc { font-size: 12px; color: var(--text-2); margin-top: 2px; }
+  .reg-row code { font-size: 11px; background: #fafafa; border-radius: 4px; padding: 1px 6px; font-family: Consolas, monospace; color: var(--text-2); }
+  .scan-target-line { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+  /* apply-to chips in modal */
+  .apply-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .apply-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-2); border-radius: 20px; padding: 5px 12px; font-size: 13px; cursor: pointer; user-select: none; }
+  .apply-chip.on { border-color: var(--primary); background: var(--primary-bg); color: var(--primary); }
+  .apply-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: #fff; border: 1px solid var(--green-border); background: var(--green-bg); color: var(--green-text); padding: 9px 18px; border-radius: 8px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.12); z-index: 100; opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(4px); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="page-head">
+    <h1>MCP 服务</h1>
+    <span class="upd-badge" onclick="toast('演示：跳到有更新的条目')">2 个可更新</span>
+  </div>
+  <p class="page-desc">在一个页面里统一管理四个客户端的 MCP。卡片上直接开关每个客户端，改动立即写盘；同名冲突会当场提示，绝不重复加载。</p>
+
+  <!-- toolbar -->
+  <div class="toolbar">
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input type="text" placeholder="搜索 MCP 名称…" oninput="filterCards(this.value)">
+    </div>
+    <button class="btn primary" onclick="openAdd()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+      添加 MCP
+    </button>
+    <button class="btn ghost" onclick="toast('演示：重新检查所有条目的更新')">检查更新</button>
+  </div>
+
+  <div id="list"></div>
+
+  <div class="note">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:2px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <div>env / headers 里的密钥在数据库中加密存储，但应用到客户端后会以明文写入各自的配置文件（~/.claude.json、~/.codex/config.toml 等）。<a href="#" onclick="return false" style="color:var(--primary)">查看写入路径</a></div>
+  </div>
+</div>
+
+<!-- ===== Add / Install modal ===== -->
+<div class="mask" id="addMask">
+  <div class="modal">
+    <header>添加 MCP <button class="x" onclick="closeMask('addMask')">×</button></header>
+    <div class="body">
+      <div class="source-tabs">
+        <div class="source-tab on" onclick="srcTab(this,'manual')"><div class="st-icon">✎</div><div class="st-title">手动填写</div><div class="st-desc">自己填命令/地址</div></div>
+        <div class="source-tab" onclick="srcTab(this,'registry')"><div class="st-icon">⬇</div><div class="st-title">从仓库安装</div><div class="st-desc">搜索官方 MCP</div></div>
+        <div class="source-tab" onclick="srcTab(this,'scan')"><div class="st-icon">⇲</div><div class="st-title">扫描纳管</div><div class="st-desc">接管已配好的</div></div>
+      </div>
+
+      <!-- manual pane -->
+      <div class="pane on" id="pane-manual">
+        <div class="field"><label>名称</label><input type="text" placeholder="filesystem"><div class="hint">只能用字母、数字、下划线、连字符</div></div>
+        <div class="field"><label>类型</label>
+          <div class="seg" style="width:100%">
+            <button class="on" style="flex:1">stdio（本地命令）</button>
+            <button style="flex:1">SSE</button>
+            <button style="flex:1">HTTP</button>
+          </div>
+        </div>
+        <div class="field"><label>启动命令</label><input type="text" placeholder="npx"></div>
+        <div class="field"><label>参数（每行一个）</label><textarea rows="2" placeholder="-y&#10;@modelcontextprotocol/server-filesystem"></textarea></div>
+        <div class="field"><label>安装到哪些客户端</label>
+          <div class="apply-chips">
+            <span class="apply-chip on" onclick="this.classList.toggle('on')"><span class="dot" style="background:#d97757"></span>Claude Code</span>
+            <span class="apply-chip on" onclick="this.classList.toggle('on')"><span class="dot" style="background:#10a37f"></span>Codex</span>
+            <span class="apply-chip" onclick="this.classList.toggle('on')"><span class="dot" style="background:#7c3aed"></span>Pi</span>
+            <span class="apply-chip" onclick="this.classList.toggle('on')"><span class="dot" style="background:#eab308"></span>Prime</span>
+          </div>
+        </div>
+        <details style="margin-top:4px"><summary style="cursor:pointer;font-size:13px;color:var(--text-2)">高级配置（env / headers / 其他）</summary>
+          <div style="margin-top:12px">
+            <div class="field"><label>环境变量 env（JSON）</label><textarea rows="2" placeholder='{ "API_KEY": "..." }'></textarea></div>
+            <div class="field"><label>请求头 headers（JSON）</label><textarea rows="2" placeholder="{}"></textarea></div>
+          </div>
+        </details>
+      </div>
+
+      <!-- registry pane -->
+      <div class="pane" id="pane-registry">
+        <div class="search" style="margin-bottom:12px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" placeholder="搜索官方仓库，如 github / postgres…"></div>
+        <div class="reg-row">
+          <div class="rr-main">
+            <div class="rr-name">github <span class="kind-tag" style="margin-left:4px">stdio</span> <span style="font-size:11px;color:var(--orange-text)">需 1 个密钥</span></div>
+            <div class="rr-desc">GitHub 官方 MCP，读写仓库/Issue/PR</div>
+            <code>npx -y @modelcontextprotocol/server-github</code>
+          </div>
+          <button class="btn primary small">安装</button>
+        </div>
+        <div class="reg-row">
+          <div class="rr-main">
+            <div class="rr-name">fetch <span class="kind-tag" style="margin-left:4px">stdio</span> <span style="font-size:11px;color:var(--green-text)">免密钥</span></div>
+            <div class="rr-desc">抓取网页并转成 markdown</div>
+            <code>uvx mcp-server-fetch</code>
+          </div>
+          <button class="btn primary small">安装</button>
+        </div>
+        <p class="hint" style="margin-top:8px">点「安装」后：需密钥的会让你填密钥；免密钥的直接选客户端装上。</p>
+      </div>
+
+      <!-- scan pane -->
+      <div class="pane" id="pane-scan">
+        <p class="hint" style="margin-bottom:12px">扫描到你在各客户端里手工配过、但还没被本工具纳管的 MCP。纳管后就能在上面的清单里统一开关。</p>
+        <div class="reg-row">
+          <div class="rr-main">
+            <div class="rr-name">playwright <span class="kind-tag">在 Codex</span></div>
+            <div class="rr-desc"><code>npx @playwright/mcp@latest</code></div>
+          </div>
+          <button class="btn primary small">纳管</button>
+        </div>
+        <div class="reg-row" style="border-color:var(--orange-border);background:var(--orange-bg)">
+          <div class="rr-main">
+            <div class="rr-name">memory <span class="kind-tag">在 Claude</span> <span style="font-size:11px;color:var(--orange-text)">与库内定义不一致</span></div>
+            <div class="rr-desc">你纳管后又在 Claude 里手工改过它，纳管会跳过以免覆盖你的改动。</div>
+          </div>
+          <button class="btn small">对比差异</button>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <button class="btn" onclick="closeMask('addMask')">取消</button>
+      <button class="btn primary" onclick="closeMask('addMask'); toast('演示：已保存并应用到选中客户端')">保存并应用</button>
+    </footer>
+  </div>
+</div>
+
+<!-- ===== Conflict resolver modal ===== -->
+<div class="mask" id="conflictMask">
+  <div class="modal" style="width:620px">
+    <header><span id="cf-title">解决冲突</span><button class="x" onclick="closeMask('conflictMask')">×</button></header>
+    <div class="body">
+      <p class="hint" id="cf-desc" style="margin-bottom:14px"></p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="border:1px solid var(--primary);border-radius:10px;overflow:hidden">
+          <div style="background:var(--primary-bg);color:var(--primary);font-size:12px;font-weight:600;padding:8px 12px">库里的定义（本工具）</div>
+          <pre id="cf-mine" style="margin:0;padding:12px;font-size:12px;font-family:Consolas,monospace;white-space:pre-wrap;color:var(--text-2);line-height:1.5"></pre>
+        </div>
+        <div style="border:1px solid var(--orange-border);border-radius:10px;overflow:hidden">
+          <div style="background:var(--orange-bg);color:var(--orange-text);font-size:12px;font-weight:600;padding:8px 12px"><span id="cf-client">客户端</span> 里现有的（你手工配的）</div>
+          <pre id="cf-theirs" style="margin:0;padding:12px;font-size:12px;font-family:Consolas,monospace;white-space:pre-wrap;color:var(--text-2);line-height:1.5"></pre>
+        </div>
+      </div>
+    </div>
+    <footer style="justify-content:space-between">
+      <button class="btn" onclick="closeMask('conflictMask')">取消</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="resolveConflict('skip')">该客户端先跳过</button>
+        <button class="btn" onclick="resolveConflict('theirs')">用客户端的（反向入库）</button>
+        <button class="btn primary" onclick="resolveConflict('mine')">用我的覆盖</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // client meta
+  const CLIENTS = [
+    { key: "claude", name: "Claude Code", dot: "#d97757" },
+    { key: "codex",  name: "Codex",       dot: "#10a37f" },
+    { key: "pi",     name: "Pi",          dot: "#7c3aed" },
+    { key: "prime",  name: "Prime",       dot: "#eab308" },
+  ];
+
+  // demo data. each mcp: on-per-client, plus conflict marker on a client
+  const DATA = [
+    { name: "filesystem", kind: "stdio", cmd: "npx -y @modelcontextprotocol/server-filesystem ~/", enabled: true,
+      clients: { claude: "on", codex: "on", pi: "off", prime: "off" } },
+    { name: "github", kind: "stdio", cmd: "npx -y @modelcontextprotocol/server-github", enabled: true, update: "v0.6.2 → v0.7.0",
+      clients: { claude: "on", codex: "conflict", pi: "off", prime: "off" },
+      conflictText: "Codex 里已有一个同名、非本工具托管的 github；它与库内定义不一致，应用时会跳过 Codex 以免覆盖你的手工配置。",
+      mineDef: '{\n  "command": "npx",\n  "args": ["-y", "@modelcontextprotocol/server-github"],\n  "env": { "GITHUB_TOKEN": "***" }\n}',
+      theirsDef: '{\n  "command": "npx",\n  "args": ["-y", "@modelcontextprotocol/server-github", "--read-only"],\n  "env": { "GITHUB_TOKEN": "***", "GITHUB_HOST": "ghe.corp" }\n}' },
+    { name: "fetch", kind: "stdio", cmd: "uvx mcp-server-fetch", enabled: true,
+      clients: { claude: "on", codex: "on", pi: "on", prime: "on" } },
+    { name: "postgres", kind: "stdio", cmd: "npx -y @modelcontextprotocol/server-postgres", enabled: false, update: "v0.1.4 → v0.2.0",
+      clients: { claude: "off", codex: "off", pi: "off", prime: "off" } },
+    { name: "sentry", kind: "http", cmd: "https://mcp.sentry.dev/sse", enabled: true,
+      clients: { claude: "on", codex: "off", pi: "on", prime: "off" } },
+  ];
+
+  function clientToggleHtml(m, c) {
+    const state = m.clients[c.key];
+    const cls = state === "conflict" ? "conflict" : state === "on" ? "active" : "";
+    const label = state === "conflict" ? "冲突" : state === "on" ? "已装" : "未装";
+    return `<div class="client-toggle ${cls}" onclick="toggleClient('${m.name}','${c.key}')">
+      <span class="cname"><span class="dot" style="background:${c.dot}"></span>${c.name}</span>
+      <span class="cstate">${label}</span>
+      <span class="switch sm ${state==='on'?'on':''}" ${state==='conflict'?'style="opacity:.4"':''}></span>
+    </div>`;
+  }
+
+  function cardHtml(m) {
+    const conflictClient = Object.keys(m.clients).find(k => m.clients[k] === "conflict");
+    return `<div class="mcp ${m.enabled?'':'disabled'} ${conflictClient?'conflict':''}" data-name="${m.name}">
+      <div class="mcp-top">
+        <div class="mcp-id">
+          <div class="mcp-name-row">
+            <span class="mcp-name">${m.name}</span>
+            <span class="kind-tag">${m.kind}</span>
+          </div>
+          <code class="mcp-cmd">${m.cmd}</code>
+        </div>
+        <div class="mcp-master">
+          <span class="switch ${m.enabled?'on':''}" title="总开关：停用后从所有客户端撤下" onclick="toast('演示：总开关 — 停用后从全部客户端撤下')"></span>
+          <div class="mcp-actions">
+            <button class="icon-btn" title="编辑" onclick="openAdd()">✎</button>
+            <button class="icon-btn danger" title="删除" onclick="toast('演示：删除并从各客户端清理')">🗑</button>
+          </div>
+        </div>
+      </div>
+      ${m.update ? `<div class="upd-line">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+        有更新 ${m.update}<button class="btn small" style="margin-left:4px" onclick="toast('演示：更新该 MCP')">更新</button></div>` : ""}
+      <div class="clients">
+        ${CLIENTS.map(c => clientToggleHtml(m, c)).join("")}
+      </div>
+      ${conflictClient ? `<div class="conflict-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:1px;flex-shrink:0"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <span>${m.conflictText}</span>
+        <span class="cb-actions"><button class="btn small" onclick="openConflict('${m.name}','${conflictClient}')">对比并解决</button></span>
+      </div>` : ""}
+    </div>`;
+  }
+
+  function render() {
+    const list = document.getElementById("list");
+    list.innerHTML = DATA.map(cardHtml).join("") || `<div class="note" style="justify-content:center">还没有 MCP，点右上角「添加 MCP」</div>`;
+  }
+
+  function toggleClient(name, ck) {
+    const m = DATA.find(x => x.name === name);
+    if (!m) return;
+    if (m.clients[ck] === "conflict") { openConflict(name, ck); return; }
+    m.clients[ck] = m.clients[ck] === "on" ? "off" : "on";
+    render();
+    toast(m.clients[ck] === "on" ? `已装到 ${ck}（立即写盘）` : `已从 ${ck} 撤下`);
+  }
+
+  function filterCards(q) {
+    q = q.trim().toLowerCase();
+    document.querySelectorAll(".mcp").forEach(el => {
+      el.style.display = el.dataset.name.toLowerCase().includes(q) ? "" : "none";
+    });
+  }
+
+  function openAdd() { document.getElementById("addMask").classList.add("show"); }
+  function closeMask(id) { document.getElementById(id).classList.remove("show"); }
+  function srcTab(el, key) {
+    document.querySelectorAll(".source-tab").forEach(t => t.classList.remove("on"));
+    el.classList.add("on");
+    document.querySelectorAll(".pane").forEach(p => p.classList.remove("on"));
+    document.getElementById("pane-" + key).classList.add("on");
+  }
+
+  let conflictCtx = null;
+  function openConflict(name, ck) {
+    const m = DATA.find(x => x.name === name);
+    if (!m) return;
+    conflictCtx = { name, ck };
+    const cname = CLIENTS.find(c => c.key === ck)?.name || ck;
+    document.getElementById("cf-title").textContent = `解决冲突 · ${name}`;
+    document.getElementById("cf-client").textContent = cname;
+    document.getElementById("cf-desc").textContent = `${cname} 里已有一个同名、你手工配置的 ${name}，和库里的定义不一致。选一种处理方式，只影响 ${cname} 这一个客户端。`;
+    document.getElementById("cf-mine").textContent = m.mineDef || "（库里的定义）";
+    document.getElementById("cf-theirs").textContent = m.theirsDef || "（客户端里的定义）";
+    document.getElementById("conflictMask").classList.add("show");
+  }
+  function resolveConflict(how) {
+    if (!conflictCtx) return;
+    const { name, ck } = conflictCtx;
+    const m = DATA.find(x => x.name === name);
+    const cname = CLIENTS.find(c => c.key === ck)?.name || ck;
+    if (m) {
+      if (how === "mine")   { m.clients[ck] = "on";  toast(`已用库里的定义覆盖 ${cname}`); }
+      if (how === "theirs") { m.clients[ck] = "on";  toast(`已把 ${cname} 里的定义反向入库，两边一致`); }
+      if (how === "skip")   { m.clients[ck] = "off"; toast(`${cname} 已跳过，未改动你的手工配置`); }
+    }
+    closeMask("conflictMask");
+    conflictCtx = null;
+    render();
+  }
+
+  let toastTimer;
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("show"), 1800);
+  }
+
+  render();
+</script>
+</body>
+</html>
