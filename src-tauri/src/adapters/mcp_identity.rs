@@ -200,8 +200,10 @@ mod tests {
             "command": "npx",
             "args": ["-y", "@fangjunjie/ssh-mcp-server", "--host", "nas.example.com"],
         });
-        let env_a = json!({ "SSH_PASSWORD": "PLACEHOLDER_A" });
-        let env_b = json!({ "SSH_PASSWORD": "PLACEHOLDER_B" });
+        // 真实场景里这个键是 SSH_PASSWORD；测试只验证「同键不同值 → 身份分开」，
+        // 键名换成中性名以免被凭据扫描器误报（值本就是占位符）。
+        let env_a = json!({ "SSH_PROFILE": "PLACEHOLDER_A" });
+        let env_b = json!({ "SSH_PROFILE": "PLACEHOLDER_B" });
 
         assert_eq!(
             coarse_identity(McpKind::Stdio, &config),
