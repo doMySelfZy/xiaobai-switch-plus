@@ -563,3 +563,25 @@ CLI 配置里的口令不一致，表现为四个 CLI 全部 404。
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 本地NSIS安装包验证收尾归档
+<!-- trellis-session: v=2 fp=518f83edab46d5ef -->
+
+**Date**: 2026-09-20
+**Task**: 本地NSIS安装包验证收尾归档
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+09-20-local-install-verify：NSIS构建+覆盖安装+启动验证4项AC全过，结论记verify-result，backend spec回填构建口径，已提交归档
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `54aa912` | docs(verify): 本地NSIS构建覆盖安装验证结论与构建口径回填 |
+
+### Status
+
+[OK] **Completed**
