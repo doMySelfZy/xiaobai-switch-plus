@@ -728,7 +728,6 @@
     "nameRule": "Only letters, numbers, underscores and hyphens",
     "nameRequired": "Server name is required",
     "secretsNotice": "Environment variables and headers are encrypted in this app; applying writes them in plaintext to the target client config files (~/.claude.json, config.toml, mcp.json, settings.json). Make sure those files stay private.",
-    "noTargets": "Select at least one target for a server",
     "pathsTitle": "Target config file locations",
     "registryTitle": "Install from the official MCP registry",
     "registryDesc": "Search the official MCP registry; picking an entry fills in the launch command, so you only add the required secrets. Common servers are listed below by default.",
@@ -789,7 +788,33 @@
     "existingImportPartial": "{{ok}} succeeded, {{failed}} failed",
     "existingImportFailed": "Import failed",
     "existingWarning": "Could not read {{target}}: {{message}}",
-    "existingNote": "Importing stores existing API keys and config encrypted in this app's database (only on your own machine and your WebDAV). The original client config is left untouched."
+    "existingNote": "Importing stores existing API keys and config encrypted in this app's database (only on your own machine and your WebDAV). The original client config is left untouched.",
+
+    "tabMine": "My MCP ({{count}})",
+
+    "tabRegistry": "Discover",
+
+    "tabScan": "Scan & Adopt ({{count}})",
+
+    "mineSearchPlaceholder": "Search MCP by name…",
+
+    "allTargets": "All targets",
+
+    "onlyUpdates": "Show updatable only",
+
+    "mineNoResults": "No matching MCP services",
+
+    "applyPanelDesc": "Select the clients to write to. Cleanup after rename, disable, or delete only removes managed entries with the xiaobai_ prefix; your own entries are never touched.",
+
+    "applyPreview": "Will write {{count}} enabled service(s) to: {{targets}}",
+
+    "applyPreviewEmpty": "No enabled services to apply",
+
+    "applyCleanupNote": "Old managed entries (xiaobai_ prefix) under unchecked targets will be cleaned up; your own entries are kept",
+
+    "notAppliedTo": "Not covered: {{targets}}",
+
+    "enabledToggle": "Toggle {{name}}"
   },
   "rules": {
     "targetClaudeCode": "Claude Code",

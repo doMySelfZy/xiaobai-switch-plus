@@ -728,7 +728,6 @@
     "nameRule": "只能使用字母、数字、下划线和短横线",
     "nameRequired": "请填写服务名称",
     "secretsNotice": "环境变量与 Headers 在本应用内加密保存；应用后会以明文写入目标客户端配置文件（如 ~/.claude.json、config.toml、mcp.json、settings.json），请自行确保这些文件的访问权限。",
-    "noTargets": "请至少为一个服务选择应用目标",
     "pathsTitle": "目标配置文件位置",
     "registryTitle": "从官方 MCP 仓库安装",
     "registryDesc": "搜索 MCP 官方仓库，选中后自动填好启动命令，你只需补必填的密钥。下方默认列出常用的服务。",
@@ -789,7 +788,33 @@
     "existingImportPartial": "{{ok}} 个成功，{{failed}} 个失败",
     "existingImportFailed": "纳管失败",
     "existingWarning": "{{target}} 读取失败：{{message}}",
-    "existingNote": "纳管会把已有的 API Key 等配置加密保存到本应用数据库（只存在你自己的电脑和 WebDAV 里）。不会改动客户端里的原配置。"
+    "existingNote": "纳管会把已有的 API Key 等配置加密保存到本应用数据库（只存在你自己的电脑和 WebDAV 里）。不会改动客户端里的原配置。",
+
+    "tabMine": "我的 MCP（{{count}}）",
+
+    "tabRegistry": "发现安装",
+
+    "tabScan": "扫描纳管（{{count}}）",
+
+    "mineSearchPlaceholder": "搜索 MCP 名称…",
+
+    "allTargets": "全部目标",
+
+    "onlyUpdates": "只看可更新",
+
+    "mineNoResults": "没有匹配的 MCP 服务",
+
+    "applyPanelDesc": "勾选要写入的客户端。改名、禁用、删除后的清理只移除 xiaobai_ 开头的托管条目，你自己的配置不会被动。",
+
+    "applyPreview": "将把 {{count}} 个启用的服务写入：{{targets}}",
+
+    "applyPreviewEmpty": "当前没有可应用的启用服务",
+
+    "applyCleanupNote": "未勾选目标下的旧托管条目（xiaobai_ 前缀）将被清理，自建条目保留",
+
+    "notAppliedTo": "未覆盖：{{targets}}",
+
+    "enabledToggle": "启用 {{name}}"
   },
   "rules": {
     "targetClaudeCode": "Claude Code",

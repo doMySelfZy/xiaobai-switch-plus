@@ -28,6 +28,20 @@ function manualAddButton(): HTMLElement {
   return screen.getByRole("button", { name: /手动添加/ });
 }
 
+function savedCard(name: string): HTMLElement {
+  const card = screen.getByText(name).closest('[data-testid="mcp-card"]');
+  if (!card) throw new Error(`saved card not found: ${name}`);
+  return card as HTMLElement;
+}
+
+async function openRegistryTab(): Promise<void> {
+  fireEvent.click(await screen.findByRole("tab", { name: /发现安装/ }));
+}
+
+async function openScanTab(): Promise<void> {
+  fireEvent.click(await screen.findByRole("tab", { name: /扫描纳管/ }));
+}
+
 async function seedServer(overrides: Record<string, unknown> = {}) {
   return handleBrowserCommand("save_mcp_server", {
     input: {
@@ -69,8 +83,9 @@ describe("McpPage", () => {
 
     expect(await screen.findByText("还没有 MCP 服务")).toBeInTheDocument();
     expect(screen.getByText(/环境变量与 Headers 在本应用内加密保存/)).toBeInTheDocument();
-    expect(screen.getByText("/Users/demo/.claude.json")).toBeInTheDocument();
-    expect(screen.getByText("/Users/demo/.prime/agent/settings.json")).toBeInTheDocument();
+    // 原生路径出现两次：应用面板的逐目标行 + 须知卡的路径明细。
+    expect(screen.getAllByText("/Users/demo/.claude.json")).toHaveLength(2);
+    expect(screen.getAllByText("/Users/demo/.prime/agent/settings.json")).toHaveLength(2);
   });
 
   it("lists saved servers with their targets", async () => {
@@ -83,10 +98,10 @@ describe("McpPage", () => {
     );
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
-    // 扫描区也会出现同名目标标签，断言限定在已保存表格的那一行内。
-    const row = screen.getByText("demo").closest("tr")!;
-    expect(within(row as HTMLElement).getByText("Claude Code")).toBeInTheDocument();
-    expect(within(row as HTMLElement).getByText("Prime")).toBeInTheDocument();
+    // 扫描区也会出现同名目标标签，断言限定在已保存卡片内。
+    const card = savedCard("demo");
+    expect(within(card).getByText("Claude Code")).toBeInTheDocument();
+    expect(within(card).getByText("Prime")).toBeInTheDocument();
   });
 
   it("rejects a server name with characters that would break config keys", async () => {
@@ -174,8 +189,9 @@ describe("McpPage", () => {
       </Wrapper>,
     );
 
-    const row = (await screen.findByText("demo")).closest("tr")!;
-    fireEvent.click(within(row).getByRole("button", { name: /编\s*辑/ }));
+    await screen.findByText("demo");
+    const card = savedCard("demo");
+    fireEvent.click(within(card).getByRole("button", { name: /编\s*辑/ }));
 
     const nameInput = (await screen.findByLabelText("服务名称")) as HTMLInputElement;
     await waitFor(() => {
@@ -219,7 +235,8 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
-      // 不点搜索也要有内容：默认拉「最近更新」，避免进来一片空白。
+      // 发现安装在页签后：内容仍在挂载时预拉（点开即有，不是一片空白）。
+      await openRegistryTab();
       expect(await screen.findByText("io.github.example/filesystem")).toBeInTheDocument();
     });
 
@@ -230,6 +247,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "example" },
       });
@@ -248,6 +266,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "no-such-server-xyz" },
       });
@@ -263,7 +282,8 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
-      // 关掉「只看本地运行」才会出现远程条目。
+      // 关掉「只看本地运行」才会出现远程条目（先切到发现安装页签）。
+      await openRegistryTab();
       fireEvent.click(await screen.findByRole("switch"));
       fireEvent.change(screen.getByPlaceholderText(/搜索，例如 github/), {
         target: { value: "hosted" },
@@ -287,6 +307,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "no-config-needed" },
       });
@@ -313,6 +334,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "filesystem" },
       });
@@ -332,6 +354,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "no-config-needed" },
       });
@@ -349,6 +372,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "filesystem" },
       });
@@ -376,6 +400,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "filesystem" },
       });
@@ -397,6 +422,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openRegistryTab();
       fireEvent.change(await screen.findByPlaceholderText(/搜索，例如 github/), {
         target: { value: "filesystem" },
       });
@@ -440,7 +466,8 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
-      // 打开即扫描，用户能立刻看到别的客户端里配了什么。
+      // 扫描在挂载时触发，切到扫描页签即见结果。
+      await openScanTab();
       expect(await screen.findByText("existing-fs")).toBeInTheDocument();
       expect(screen.getByText("existing-db")).toBeInTheDocument();
     });
@@ -453,6 +480,7 @@ describe("McpPage", () => {
       );
 
       // 只列键名，密钥值从不离开后端。
+      await openScanTab();
       expect(await screen.findByText(/需要 DB_URL/)).toBeInTheDocument();
       expect(screen.queryByText(/DB_URL=/)).toBeNull();
     });
@@ -464,6 +492,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openScanTab();
       expect(await screen.findByText("managed-one")).toBeInTheDocument();
       expect(screen.getByText("本工具管理")).toBeInTheDocument();
       // 两条可纳管，托管那条没有单条纳管按钮（批量按钮不计入）。
@@ -477,6 +506,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openScanTab();
       const row = (await screen.findByText("existing-fs")).closest(".ant-list-item")!;
       fireEvent.click(within(row as HTMLElement).getByRole("button", { name: /^纳\s*管$/ }));
 
@@ -496,6 +526,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      await openScanTab();
       fireEvent.click(await screen.findByRole("button", { name: /全部纳管/ }));
 
       await waitFor(() => {
@@ -505,6 +536,95 @@ describe("McpPage", () => {
       await waitFor(() => {
         expect(screen.queryByRole("button", { name: /全部纳管/ })).toBeNull();
       });
+    });
+  });
+
+  describe("mine tab (P1 layout)", () => {
+    it("opens on the mine tab and mounts other panels only when their tabs are picked", async () => {
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      expect(screen.getByRole("tab", { name: /我的 MCP/ })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      // 非激活页签不挂载：扫描到的条目此时不在 DOM 里。
+      expect(screen.queryByText("existing-fs")).toBeNull();
+      await openScanTab();
+      expect(await screen.findByText("existing-fs")).toBeInTheDocument();
+    });
+
+    it("filters saved servers by name", async () => {
+      await seedServer({ name: "alpha", targets: ["claude_code"] });
+      await seedServer({ name: "beta", targets: ["codex"] });
+
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      expect(await screen.findByText("alpha")).toBeInTheDocument();
+      expect(screen.getByText("beta")).toBeInTheDocument();
+      fireEvent.change(screen.getByPlaceholderText(/搜索 MCP 名称/), {
+        target: { value: "alp" },
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("beta")).toBeNull();
+      });
+      expect(screen.getByText("alpha")).toBeInTheDocument();
+    });
+
+    it("shows which targets a server does not cover", async () => {
+      await seedServer({ targets: ["claude_code"] });
+
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      await screen.findByText("demo");
+      expect(within(savedCard("demo")).getByText(/未覆盖/)).toBeInTheDocument();
+    });
+
+    it("toggles a server off and persists the change", async () => {
+      await seedServer({ targets: ["claude_code"] });
+
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      await screen.findByText("demo");
+      const toggle = within(savedCard("demo")).getByRole("switch");
+      expect(toggle).toBeChecked();
+      fireEvent.click(toggle);
+      // 开关直接落库：禁用态标签出现，且 store 里同步更新。
+      expect(await screen.findByText("已禁用")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(useMcpStore.getState().servers[0].enabled).toBe(false);
+      });
+    });
+
+    it("previews the apply scope in the panel", async () => {
+      await seedServer({ targets: ["claude_code", "codex"] });
+
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      expect(
+        await screen.findByText(/将把 1 个启用的服务写入：Claude Code、Codex/),
+      ).toBeInTheDocument();
+      // 只勾了两个目标，清理提示必须可见（只动 xiaobai_ 前缀）。
+      expect(screen.getByText(/旧托管条目/)).toBeInTheDocument();
     });
   });
 });

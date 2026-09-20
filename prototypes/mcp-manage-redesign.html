@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP 服务管理重设计 · P0 原型评审稿</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --primary: #1677ff; --bg: #f5f5f5; --card: #ffffff;
+    --border: #e8e8e8; --text: #1f1f1f; --text-2: #595959; --text-3: #8c8c8c;
+    --green: #52c41a; --orange: #fa8c16; --red: #ff4d4f; --blue-bg: #e6f4ff;
+  }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Inter", sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; padding: 0 0 80px; font-size: 14px; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 24px 24px 0; }
+  .hero { background: linear-gradient(135deg, #111c33, #1d3a6e); color: #fff; border-radius: 12px; padding: 28px 28px 24px; margin-bottom: 20px; }
+  .hero h1 { font-size: 22px; margin-bottom: 6px; }
+  .hero p { color: #b8c6e2; font-size: 13px; max-width: 820px; }
+  .hero .badges { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .badge { font-size: 12px; padding: 2px 10px; border-radius: 20px; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25); }
+  .badge.solid { background: #1677ff; border-color: #1677ff; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 20px; }
+  .card h2 { font-size: 17px; margin-bottom: 4px; }
+  .card h2 .no { display: inline-block; background: var(--primary); color: #fff; font-size: 12px; border-radius: 6px; padding: 1px 8px; margin-right: 8px; vertical-align: 2px; }
+  .sub { color: var(--text-2); font-size: 13px; margin-bottom: 14px; }
+  .diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0; }
+  .diff-box { border-radius: 8px; padding: 12px 14px; font-size: 13px; }
+  .diff-box.old { background: #fff2f0; border: 1px solid #ffccc7; }
+  .diff-box.new { background: #f6ffed; border: 1px solid #b7eb8f; }
+  .diff-box b { display: block; margin-bottom: 6px; }
+  .diff-box ul { padding-left: 18px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 4px; background: #f0f0f0; color: var(--text-2); margin: 1px 2px; vertical-align: 1px; }
+  .tag.green { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+  .tag.orange { background: #fff7e6; color: #d46b08; border: 1px solid #ffd591; }
+  .tag.blue { background: var(--blue-bg); color: #0958d9; border: 1px solid #91caff; }
+  .tag.red { background: #fff1f0; color: #cf1322; border: 1px solid #ffa39e; }
+  .tag.gray { background: #f5f5f5; color: var(--text-3); border: 1px solid #d9d9d9; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: #fafafa; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+  .toolbar input[type="text"] { flex: 1; min-width: 180px; padding: 7px 10px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 13px; }
+  .btn { border: 1px solid #d9d9d9; background: #fff; border-radius: 6px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .btn:hover { border-color: var(--primary); color: var(--primary); }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  .btn.primary:hover { background: #4096ff; color: #fff; }
+  .btn.danger { color: var(--red); border-color: #ffa39e; }
+  .btn.small { padding: 3px 10px; font-size: 12px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 14px; }
+  .tab { padding: 8px 16px; cursor: pointer; font-size: 14px; color: var(--text-2); border-bottom: 2px solid transparent; margin-bottom: -2px; background: none; border-top: none; border-left: none; border-right: none; }
+  .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+  .tab .count { background: #f0f0f0; border-radius: 10px; font-size: 11px; padding: 0 7px; margin-left: 4px; }
+  .tab.active .count { background: var(--blue-bg); color: #0958d9; }
+  .mcp-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; display: flex; gap: 12px; align-items: flex-start; }
+  .mcp-card:hover { border-color: #91caff; }
+  .mcp-card .main { flex: 1; min-width: 0; }
+  .mcp-card .name { font-weight: 600; font-size: 14px; }
+  .mcp-card code.cmd { display: block; background: #f5f5f5; border-radius: 4px; font-size: 12px; padding: 3px 8px; margin-top: 6px; color: var(--text-2); font-family: Consolas, monospace; }
+  .mcp-card .side { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; white-space: nowrap; }
+  .switch { position: relative; width: 34px; height: 18px; background: var(--primary); border-radius: 20px; display: inline-block; vertical-align: middle; }
+  .switch::after { content: ""; position: absolute; width: 14px; height: 14px; background: #fff; border-radius: 50%; top: 2px; right: 2px; }
+  .switch.off { background: #bfbfbf; } .switch.off::after { right: 18px; }
+  .checkrow { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .checkrow input { margin-top: 4px; }
+  .paths { font-size: 12px; color: var(--text-3); font-family: Consolas, monospace; }
+  .result { border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 10px; display: none; }
+  .result.show { display: block; }
+  .result.ok { background: #f6ffed; border: 1px solid #b7eb8f; }
+  .result.warn { background: #fffbe6; border: 1px solid #ffe58f; }
+  .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
+  .modal-mask.show { display: flex; }
+  .modal { background: #fff; border-radius: 10px; width: 560px; max-width: 100%; max-height: calc(100vh - 32px); display: flex; flex-direction: column; overflow: hidden; }
+  .modal header { padding: 14px 20px; border-bottom: 1px solid var(--border); font-weight: 600; }
+  .modal .body { padding: 16px 20px; overflow-y: auto; }
+  .modal footer { padding: 12px 20px; border-top: 1px solid var(--border); text-align: right; display: flex; gap: 8px; justify-content: flex-end; }
+  .field { margin-bottom: 12px; } .field label { display: block; font-size: 13px; margin-bottom: 4px; font-weight: 500; }
+  .field input, .field select, .field textarea { width: 100%; border: 1px solid #d9d9d9; border-radius: 6px; padding: 7px 10px; font-size: 13px; }
+  .field .hint { font-size: 12px; color: var(--text-3); margin-top: 3px; }
+  .steps { display: flex; gap: 6px; margin-bottom: 14px; }
+  .step { flex: 1; text-align: center; font-size: 12px; padding: 6px 4px; border-radius: 6px; background: #f5f5f5; color: var(--text-3); }
+  .step.active { background: var(--blue-bg); color: #0958d9; font-weight: 600; }
+  .step.done { background: #f6ffed; color: #389e0d; }
+  .scanrow { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .kbd { background: #f5f5f5; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 11px; padding: 0 5px; }
+  .toc { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+  .toc a { background: #fff; border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; font-size: 13px; color: var(--text); text-decoration: none; }
+  .toc a:hover { border-color: var(--primary); color: var(--primary); }
+  .note { background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 12px; }
+  @media (max-width: 720px) { .diff-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="hero">
+    <h1>MCP 服务管理 · 重设计 P0 原型评审稿</h1>
+    <p>只做 MCP 页内容区（标题栏 36px / 侧栏 48px 不在原型范围）。对照现状 <span class="kbd">src/pages/McpPage.tsx</span>（1333 行：顶栏 + Registry 卡 + 扫描纳管卡 + 已保存 Table + 须知卡 + 560 宽 Modal）逐项给出新版信息架构与交互，评审确认后才进 P1 / P2。本稿为静态演示，所有按钮均为页内交互，不调后端。</p>
+    <div class="badges"><span class="badge solid">P0 · 待评审</span><span class="badge">R1 布局</span><span class="badge">R2 应用目标</span><span class="badge">R3 扫描纳管</span><span class="badge">R4 Registry 安装</span></div>
+  </div>
+
+  <div class="toc">
+    <a href="#r1">R1 · 页面布局</a><a href="#r2">R2 · 应用目标流程</a><a href="#r3">R3 · 扫描纳管规则</a><a href="#r4">R4 · Registry 安装</a><a href="#qa">评审问题</a>
+  </div>
+
+  <!-- ============ R1 ============ -->
+  <div class="card" id="r1">
+    <h2><span class="no">R1</span>页面布局与核心交互（现状 5 区块 → 新版 3 页签）</h2>
+    <p class="sub">核心改动：纵向堆叠的 5 张卡改为「页签分区 + 常驻工具栏」；已保存从 Table 改为卡片列表（目标 chips / 启用开关 / 更新角标一眼可见）；危险与全局操作从顶栏拆到各自的分區。</p>
+    <div class="diff-grid">
+      <div class="diff-box old"><b>现状痛点（5 区块纵堆）</b><ul>
+        <li>顶栏挤了 4 个主按钮：检查更新 / 全部更新 / 应用到目标 / 手动添加</li>
+        <li>Registry、扫描、已保存 Table、须知纵向堆叠，找一个 MCP 要滚三屏</li>
+        <li>已保存是 Table：目标只是一串 Tag，改名/禁用后会发生什么看不见</li>
+        <li>更新角标藏在标题后 + 行内小图标，批量更新要先“发现”按钮</li>
+      </ul></div>
+      <div class="diff-box new"><b>新版改动（本原型）</b><ul>
+        <li>顶栏只留：搜索 + 目标/状态筛选 +「手动添加」；检查更新收进“更新”分组</li>
+        <li>页签分区：<b>我的 MCP(3) / 发现安装 / 扫描纳管(3)</b>，互不抢屏</li>
+        <li>我的 MCP 改卡片：每行自带目标 chips、启用开关、更新角标、行内操作</li>
+        <li>应用操作下沉到 R2 独立面板，不再是顶栏一个“盲按”按钮</li>
+      </ul></div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="mySearch" placeholder="搜索我的 MCP（名称 / 命令 / URL）…" oninput="filterMine(this.value)">
+      <select id="targetFilter" onchange="filterMine(document.getElementById('mySearch').value)" style="border:1px solid #d9d9d9;border-radius:6px;padding:6px 8px;font-size:13px">
+        <option value="">全部目标</option><option>Claude Code</option><option>Codex</option><option>Pi</option><option>Prime</option>
+      </select>
+      <button class="btn" onclick="toggleOnlyUpdate()">只看可更新 <span id="onlyUpdateState">否</span></button>
+      <span style="flex:1"></span>
+      <button class="btn" onclick="openModal('updateModal')">检查更新 <span class="tag orange">2</span></button>
+      <button class="btn primary" onclick="openModal('editModal')">＋ 手动添加</button>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab(event,'tabMine')">我的 MCP <span class="count">3</span></button>
+      <button class="tab" onclick="switchTab(event,'tabReg')">发现安装</button>
+      <button class="tab" onclick="switchTab(event,'tabScan')">扫描纳管 <span class="count">3</span></button>
+    </div>
+
+    <div id="tabMine">
+      <div class="mcp-card" data-name="filesystem" data-targets="Claude Code Codex" data-update="1">
+        <div class="main">
+          <div class="name">filesystem <span class="tag green">stdio</span> <span class="tag orange">可更新 v1.2.0 → v1.4.0</span></div>
+          <div style="margin-top:6px"><span class="tag blue">Claude Code</span><span class="tag blue">Codex</span><span class="tag gray">未勾选 Pi / Prime</span></div>
+          <code class="cmd">npx -y @modelcontextprotocol/server-filesystem /data</code>
+        </div>
+        <div class="side">
+          <span title="启用开关"><span class="switch"></span> 启用</span>
+          <div><button class="btn small" onclick="openModal('applyModal')">应用</button>
+          <button class="btn small" onclick="openModal('editModal')">编辑</button>
+          <button class="btn small danger" onclick="openModal('deleteModal')">删除</button></div>
+        </div>
+      </div>
+      <div class="mcp-card" data-name="brave-search" data-targets="Pi Prime" data-update="1">
+        <div class="main">
+          <div class="name">brave-search <span class="tag green">HTTP</span> <span class="tag orange">可更新</span></div>
+          <div style="margin-top:6px"><span class="tag blue">Pi</span><span class="tag blue">Prime</span></div>
+          <code class="cmd">https://mcp.brave.com/sse · 密钥 BRAVE_API_KEY（后端加密存，落盘明文）</code>
+        </div>
+        <div class="side">
+          <span><span class="switch"></span> 启用</span>
+          <div><button class="btn small" onclick="openModal('applyModal')">应用</button>
+          <button class="btn small" onclick="openModal('editModal')">编辑</button>
+          <button class="btn small danger" onclick="openModal('deleteModal')">删除</button></div>
+        </div>
+      </div>
+      <div class="mcp-card" data-name="sqlite-local" data-targets="Claude Code" data-update="0">
+        <div class="main">
+          <div class="name">sqlite-local <span class="tag green">stdio</span> <span class="tag gray">已是最新</span></div>
+          <div style="margin-top:6px"><span class="tag blue">Claude Code</span></div>
+          <code class="cmd">uvx mcp-server-sqlite --db ~/data.db</code>
+        </div>
+        <div class="side">
+          <span><span class="switch off"></span> 已停用</span>
+          <div><button class="btn small" onclick="openModal('applyModal')">应用</button>
+          <button class="btn small" onclick="openModal('editModal')">编辑</button>
+          <button class="btn small danger" onclick="openModal('deleteModal')">删除</button></div>
+        </div>
+      </div>
+      <div class="note">与现状差异：Table 的「名称 / 类型 / 目标 / 启用 / 操作」五列 → 卡片一行内同时看到 <b>运行命令预览 + 目标缺口（未勾选 Pi/Prime）+ 更新角标</b>；停用态整卡置灰（本稿以开关示意）。编辑弹窗沿用 560 宽、简单层 + 高级折叠，见下方“手动添加”演示。</div>
+    </div>
+    <div id="tabReg" style="display:none">
+      <p style="font-size:13px;color:var(--text-2)">仓库发现已搬到 <a href="#r4">R4 区</a>做完整安装演示，这里只保留入口提示，避免两处维护同一份列表。新版页签与 R4 共用同一数据源（官方 Registry）。</p>
+      <button class="btn primary" onclick="document.location.hash='#r4'">去看 R4 安装体验 ↓</button>
+    </div>
+    <div id="tabScan" style="display:none">
+      <p style="font-size:13px;color:var(--text-2)">扫描纳管已搬到 <a href="#r3">R3 区</a>做规则演示：发现列表 / 等价接管 / 冲突跳过。这里只保留计数与入口。</p>
+      <button class="btn primary" onclick="document.location.hash='#r3'">去看 R3 扫描纳管 ↓</button>
+    </div>
+  </div>
+
+  <!-- ============ R2 ============ -->
+  <div class="card" id="r2">
+    <h2><span class="no">R2</span>应用目标流程（盲按 → 所见即所得）</h2>
+    <p class="sub">现状：顶栏「应用到目标」一键应用全部启用项，改名 / 禁用 / 删除后的清理发生在后台 modal.info 里。铁律不变：四目标原生位置、<span class="kbd">xiaobai_</span> 前缀、只清本前缀、备份 + 原子替换 + .lock、形状非法报错保留。</p>
+    <div class="diff-grid">
+      <div class="diff-box old"><b>现状</b><ul>
+        <li>顶栏盲按：不知道会写哪几个客户端、覆盖多少条</li>
+        <li>结果只有 modal.info 成功/失败两行字，失败原因要去日志翻</li>
+        <li>改名/禁用/删除的清理提示只有删除确认里一句话</li>
+      </ul></div>
+      <div class="diff-box new"><b>新版（下方面板）</b><ul>
+        <li>应用前先勾目标，实时预览“将写入 N 条 / 清理 M 条旧托管条目”</li>
+        <li>逐目标结果行：成功 / 失败原因 / 所写文件路径，一屏看完</li>
+        <li>改名/禁用/删除统一走“清理预览”：只动 <span class="kbd">xiaobai_*</span>，用户条目逐字节保留</li>
+      </ul></div>
+    </div>
+    <div class="checkrow"><input type="checkbox" checked onchange="previewApply()"><div><b>Claude Code</b> <span class="tag blue">2 条生效</span><div class="paths">~/.claude.json → 顶层 mcpServers（不在 settings.json）</div></div></div>
+    <div class="checkrow"><input type="checkbox" checked onchange="previewApply()"><div><b>Codex</b> <span class="tag blue">2 条生效</span><div class="paths">~/.codex/config.toml → [mcp_servers.*]（toml_edit 保留注释）</div></div></div>
+    <div class="checkrow"><input type="checkbox" onchange="previewApply()"><div><b>Pi</b> <span class="tag gray">0 条（本次未勾选，将清理旧托管条目）</span><div class="paths">&lt;pi agent dir&gt;/mcp.json → mcpServers</div></div></div>
+    <div class="checkrow"><input type="checkbox" onchange="previewApply()"><div><b>Prime</b> <span class="tag gray">0 条</span><div class="paths">&lt;prime agent dir&gt;/settings.json → mcpServers（与 prime 适配器共用锁）</div></div></div>
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <button class="btn primary" onclick="simulateApply()">应用到勾选目标</button>
+      <span id="applyPreview" style="font-size:13px;color:var(--text-2)">将写入 Claude Code 2 条、Codex 2 条；清理 Pi 下 1 条旧托管 xiaobai_sqlite-local；用户自建条目 5 条不受影响。</span>
+    </div>
+    <div class="result ok" id="applyResult">✅ Claude Code：成功（已备份 → 原子替换，2 条 xiaobai_* 生效）<br>✅ Codex：成功（2 条生效，用户注释保留）<br>⚠️ Pi：未勾选 → 已清理旧托管 <span class="kbd">xiaobai_sqlite-local</span>，用户自建 <span class="kbd">my-sqlite</span> 保留<br>❌ Prime：<b>形状不合法</b>（mcpServers 不是对象）——文件原样保留，请手动修复后重试（演示：取消勾选即不触发此错）</div>
+    <div class="note"><b>改名 / 禁用 / 删除清理预览（示例：把 filesystem 改名 filesystem-v2）：</b>删除 <span class="kbd">xiaobai_filesystem</span> → 写入 <span class="kbd">xiaobai_filesystem-v2</span>，净结果仍各客户端一条；禁用 = 写盘时跳过但库内保留；删除 = 清掉全部四目标下的 <span class="kbd">xiaobai_filesystem</span>。用户自建的 <span class="kbd">filesystem</span>（无前缀）永不触碰。</div>
+  </div>
+
+  <!-- ============ R3 ============ -->
+  <div class="card" id="r3">
+    <h2><span class="no">R3</span>扫描纳管规则（列表 → 接管确认）</h2>
+    <p class="sub">铁律：扫描只回元数据（键名不含值，密钥由后端按 target+key 重读取盘）；应用时先接管——等价则删未托管同名条目再写 <span class="kbd">xiaobai_</span>；不等价则报错跳过该目标、文件原样保留。</p>
+    <div class="diff-grid">
+      <div class="diff-box old"><b>现状</b><ul>
+        <li>一键纳管 + 逐条纳管混在一起，不知道哪条会被“接管”、哪条会冲突</li>
+        <li>等价 / 不等价只在后端报错里出现，前端无预告</li>
+      </ul></div>
+      <div class="diff-box new"><b>新版</b><ul>
+        <li>三态标签：<span class="tag green">可纳管</span> <span class="tag blue">等价·将接管</span> <span class="tag red">冲突·将跳过</span>，逐条说明后果</li>
+        <li>纳管前确认弹窗列出“删谁 / 写谁 / 跳过谁”，密钥字段只显示键名</li>
+      </ul></div>
+    </div>
+    <div class="scanrow"><input type="checkbox" checked><div style="flex:1"><b>my-notes</b> <span class="tag gray">Codex</span> <span class="tag green">可纳管</span><br><code class="cmd" style="font-size:12px">npx -y mcp-notes --dir ~/notes · 密钥键：NOTES_TOKEN（值不回传）</code></div><button class="btn small" onclick="openModal('importModal')">纳管</button></div>
+    <div class="scanrow"><input type="checkbox" checked><div style="flex:1"><b>filesystem</b> <span class="tag gray">Claude Code</span> <span class="tag blue">等价 · 将接管</span><br><span style="font-size:12px;color:var(--text-2)">目标里已有未托管同名条目且与库内等价 → 纳管时先删它，再写 <span class="kbd">xiaobai_filesystem</span>，净结果仍是一条。</span></div><button class="btn small" onclick="openModal('importModal')">纳管</button></div>
+    <div class="scanrow"><input type="checkbox"><div style="flex:1"><b>brave-search</b> <span class="tag gray">Pi</span> <span class="tag red">冲突 · 将跳过</span><br><span style="font-size:12px;color:var(--text-2)">用户纳管后又手动改过目标文件（URL 不一致）→ 本次跳过该目标、文件原样保留，不会用库内旧版覆盖。</span></div><button class="btn small" disabled>不可纳管</button></div>
+    <div style="margin-top:10px;display:flex;gap:8px"><button class="btn primary" onclick="openModal('importModal')">纳管选中（2）</button><button class="btn" onclick="alert('演示：重新扫描四目标原生位置，只读不写盘')">重新扫描</button></div>
+    <div class="note">已有警告示例：<span class="tag orange">Codex 配置不可读（TOML 解析失败），已跳过该客户端，其余 3 个正常</span> —— 单客户端失败不影响其它客户端（现状行为保留）。</div>
+  </div>
+
+  <!-- ============ R4 ============ -->
+  <div class="card" id="r4">
+    <h2><span class="no">R4</span>Registry 安装体验（一键装 vs 填密钥分流）</h2>
+    <p class="sub">现状：搜索 +「只看本地」开关 + 列表 + 一键安装混在一卡；必填密钥藏在 560 弹窗下半部分。底层安装语义（npm/npx/uvx/pip）不动，只优化触发与展示。</p>
+    <div class="diff-grid">
+      <div class="diff-box old"><b>现状</b><ul>
+        <li>空查询才给“热门”，搜不到时一片空白</li>
+        <li>一键安装点下去才知道要填密钥还是直接装好</li>
+        <li>远程条目只一行描述，看不到请求会发到哪个域名</li>
+      </ul></div>
+      <div class="diff-box new"><b>新版</b><ul>
+        <li>徽标预告：<span class="tag green">免密钥·点即装</span> / <span class="tag orange">需填 1 个密钥</span>，点之前就有预期</li>
+        <li>远程条目明示域名 + 将运行的命令 / 将连接的 URL 预览</li>
+        <li>需密钥的走 3 步向导：选目标 → 填密钥 → 确认命令 Betrag；免密钥的直接装</li>
+      </ul></div>
+    </div>
+    <div class="toolbar">
+      <input type="text" value="filesystem" aria-label="registry-search">
+      <button class="btn primary">搜索</button>
+      <button class="btn small">只看本地：开</button>
+      <button class="btn small">全部</button><button class="btn small">stdio</button><button class="btn small">远程</button>
+    </div>
+    <div class="mcp-card"><div class="main"><div class="name">@modelcontextprotocol/server-filesystem <span class="tag green">本地</span> <span class="tag green">免密钥 · 点即装</span> <span style="font-size:12px;color:var(--text-3)">v1.4.0</span></div>
+      <div style="font-size:13px;color:var(--text-2)">安全的文件系统读写，默认沿用你已用的目标（Claude Code、Codex）。</div>
+      <code class="cmd">将运行：npx -y @modelcontextprotocol/server-filesystem /data</code></div>
+      <div class="side"><button class="btn small primary" onclick="simulateInstall(this)">一键安装</button></div></div>
+    <div class="mcp-card"><div class="main"><div class="name">brave-search <span class="tag orange">远程</span> <span class="tag orange">需填 1 个密钥</span></div>
+      <div style="font-size:13px;color:var(--text-2)">远程搜索 · 请求域名：<span class="kbd">mcp.brave.com</span></div>
+      <code class="cmd">将连接：https://mcp.brave.com/sse</code></div>
+      <div class="side"><button class="btn small" onclick="openModal('wizardModal')">去填密钥</button></div></div>
+    <div class="note" id="installNote" style="display:none">✅ 已安装到 Claude Code、Codex（复用已有目标，无需重勾）；密钥 BRAVE_API_KEY 已加密入库。请到 R2 面板确认写盘结果。</div>
+  </div>
+
+  <div class="card" id="qa">
+    <h2>评审问题（请在评审会确认）</h2>
+    <p class="sub">确认后落回 prd / design，不直接进代码。以下为 P1 / P2 拆分前的待决交互细节：</p>
+    <ol style="padding-left:20px;font-size:14px;display:flex;flex-direction:column;gap:6px">
+      <li>R1：三页签（我的 / 发现 / 扫描）是否可接受？还是要保留现状单屏纵览？</li>
+      <li>R2：应用面板放在页内常驻，还是收进弹窗（每次点“应用”才展开目标勾选）？</li>
+      <li>R3：冲突条目是默认不勾选（本稿），还是允许强制覆盖（需二次确认）？—— 后端铁律倾向前者。</li>
+      <li>R4：免密钥条目默认沿用已有目标直接装（本稿），无已有目标时是弹窗问一次，还是先入库不应用？</li>
+    </ol>
+  </div>
+</div>
+
+<!-- modals -->
+<div class="modal-mask" id="editModal"><div class="modal">
+  <header>手动添加 / 编辑 MCP（560 宽 · 简单层 + 高级折叠，现状沿用）</header>
+  <div class="body">
+    <div class="field"><label>名称（A-Za-z0-9_-）</label><input value="filesystem"></div>
+    <div class="field"><label>类型</label><select><option>stdio</option><option>SSE</option><option>HTTP</option></select></div>
+    <div class="field"><label>应用目标（R2 新版：此处勾选 = 保存即应用，清理规则同 R2）</label><div><label><input type="checkbox" checked> Claude Code</label> <label><input type="checkbox" checked> Codex</label> <label><input type="checkbox"> Pi</label> <label><input type="checkbox"> Prime</label></div></div>
+    <div class="field"><label>启动命令</label><input value="npx"><div class="hint">参数每行一个：-y / @modelcontextprotocol/server-filesystem / /data</div></div>
+    <div class="field"><label><input type="checkbox" checked> 启用</label></div>
+    <details><summary style="cursor:pointer;font-size:13px">高级配置（env / headers / 其余 config，与现状一致，JSON）</summary>
+      <div class="field" style="margin-top:8px"><label>env（加密存，落盘明文 — UI 必须声明）</label><textarea rows="2">{}</textarea></div>
+      <div class="field"><label>headers</label><textarea rows="2">{}</textarea></div>
+    </details>
+  </div>
+  <footer><button class="btn" onclick="closeModal('editModal')">取消</button><button class="btn primary" onclick="closeModal('editModal')">保存</button></footer>
+</div></div>
+
+<div class="modal-mask" id="applyModal"><div class="modal">
+  <header>应用 filesystem 到目标</header>
+  <div class="body"><p style="font-size:13px">单条应用演示：勾选即写该条，未勾选目标下若有旧托管 <span class="kbd">xiaobai_filesystem</span> 则清理；用户条目保留。批量应用见 <a href="#r2">R2 面板</a>。</p>
+    <div class="field"><label><input type="checkbox" checked> Claude Code</label><label><input type="checkbox" checked> Codex</label><label><input type="checkbox"> Pi</label><label><input type="checkbox"> Prime</label></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal('applyModal')">取消</button><button class="btn primary" onclick="closeModal('applyModal')">应用</button></footer>
+</div></div>
+
+<div class="modal-mask" id="deleteModal"><div class="modal">
+  <header>删除 filesystem？</header>
+  <div class="body"><p style="font-size:14px">确认删除 <b>filesystem</b> 吗？</p>
+  <p style="font-size:13px;color:var(--text-2);margin-top:8px">将同步清理四目标下的 <span class="kbd">xiaobai_filesystem</span> 托管条目；你的自建条目不受影响。此操作可从备份恢复。</p></div>
+  <footer><button class="btn" onclick="closeModal('deleteModal')">取消</button><button class="btn danger" onclick="closeModal('deleteModal')">删除并清理各目标</button></footer>
+</div></div>
+
+<div class="modal-mask" id="importModal"><div class="modal">
+  <header>确认纳管（2 条）</header>
+  <div class="body">
+    <p style="font-size:13px">✅ <b>my-notes</b>（Codex）：新增入库并写 <span class="kbd">xiaobai_my-notes</span>；密钥按 target+key 由后端重读，<b>只显示键名 NOTES_TOKEN</b>。</p>
+    <p style="font-size:13px;margin-top:6px">🔁 <b>filesystem</b>（Claude Code）：与库内等价 → 先删未托管同名条目，再写 <span class="kbd">xiaobai_filesystem</span>，净结果一条。</p>
+    <p style="font-size:13px;margin-top:6px;color:var(--red)">⛔ <b>brave-search</b>（Pi）：与库内不等价 → 跳过该目标，文件原样保留（本次未勾选）。</p>
+  </div>
+  <footer><button class="btn" onclick="closeModal('importModal')">取消</button><button class="btn primary" onclick="closeModal('importModal')">确认纳管</button></footer>
+</div></div>
+
+<div class="modal-mask" id="wizardModal"><div class="modal">
+  <header>安装 brave-search（需 1 个密钥）</header>
+  <div class="body">
+    <div class="steps"><div class="step done">1 选目标</div><div class="step active">2 填密钥</div><div class="step">3 确认</div></div>
+    <div class="field"><label>应用目标（默认沿用已有：Claude Code、Codex）</label><div><label><input type="checkbox" checked> Claude Code</label> <label><input type="checkbox" checked> Codex</label></div></div>
+    <div class="field"><label>BRAVE_API_KEY <span class="tag red">密钥·加密入库，落盘明文</span></label><input type="password" placeholder="粘贴后仅用于本次安装，不在界面回显"><div class="hint">远程域名 mcp.brave.com · 将连接 https://mcp.brave.com/sse</div></div>
+  </div>
+  <footer><button class="btn" onclick="closeModal('wizardModal')">取消</button><button class="btn primary" onclick="closeModal('wizardModal')">下一步：确认命令</button></footer>
+</div></div>
+
+<div class="modal-mask" id="updateModal"><div class="modal">
+  <header>更新（npm 安装语义不动，只优化触发与展示）</header>
+  <div class="body"><p style="font-size:13px">filesystem：v1.2.0 → v1.4.0 <button class="btn small" style="margin-left:8px">更新</button></p>
+  <p style="font-size:13px;margin-top:6px">brave-search：有新版 <button class="btn small" style="margin-left:8px">更新</button></p>
+  <p style="font-size:12px;color:var(--text-3);margin-top:8px">检查 TTL 30 分钟 + in-flight 去重；手动“检查更新”强制刷新（现状行为保留）。</p></div>
+  <footer><button class="btn" onclick="closeModal('updateModal')">关闭</button><button class="btn primary" onclick="closeModal('updateModal')">全部更新（2）</button></footer>
+</div></div>
+
+<script>
+  function switchTab(e, id) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    e.currentTarget.classList.add('active');
+    ['tabMine','tabReg','tabScan'].forEach(k => document.getElementById(k).style.display = k === id ? '' : 'none');
+  }
+  function openModal(id) { document.getElementById(id).classList.add('show'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+  document.querySelectorAll('.modal-mask').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.classList.remove('show'); }));
+  let onlyUpdate = false;
+  function toggleOnlyUpdate() { onlyUpdate = !onlyUpdate; document.getElementById('onlyUpdateState').textContent = onlyUpdate ? '是' : '否'; filterMine(document.getElementById('mySearch').value); }
+  function filterMine(q) {
+    q = (q || '').trim().toLowerCase();
+    const tf = document.getElementById('targetFilter').value;
+    document.querySelectorAll('#tabMine .mcp-card').forEach(c => {
+      const hitQ = !q || (c.dataset.name + ' ' + c.textContent).toLowerCase().includes(q);
+      const hitT = !tf || (c.dataset.targets || '').includes(tf);
+      const hitU = !onlyUpdate || c.dataset.update === '1';
+      c.style.display = (hitQ && hitT && hitU) ? '' : 'none';
+    });
+  }
+  function previewApply() {
+    const boxes = document.querySelectorAll('#r2 .checkrow input');
+    const names = ['Claude Code','Codex','Pi','Prime'];
+    const on = [...boxes].map((b,i) => b.checked ? names[i] : null).filter(Boolean);
+    document.getElementById('applyPreview').textContent = on.length
+      ? '将写入 ' + on.join('、') + '；未勾选目标下的旧托管 xiaobai_* 按 R2 规则清理；用户自建条目保留。'
+      : '未勾选任何目标：仅执行清理（删旧托管条目），不写入新配置。';
+    document.getElementById('applyResult').classList.remove('show');
+  }
+  function simulateApply() { document.getElementById('applyResult').classList.add('show'); }
+  function simulateInstall(btn) { btn.textContent = '已安装 ✓'; btn.disabled = true; document.getElementById('installNote').style.display = ''; }
+</script>
+</body>
+</html>

@@ -12,9 +12,10 @@ import {
   List,
   Modal,
   Segmented,
+  Select,
   Space,
   Switch,
-  Table,
+  Tabs,
   Tag,
   Tooltip,
   Typography,
@@ -22,9 +23,6 @@ import {
 } from "antd";
 import {
   CloudDownloadOutlined,
-  CloudUploadOutlined,
-  DeleteOutlined,
-  EditOutlined,
   ImportOutlined,
   InfoCircleOutlined,
   PlusOutlined,
@@ -37,6 +35,7 @@ import { invoke } from "@/lib/invoke";
 import { useMcpStore } from "@/stores";
 import { useMcpUpdateStore } from "@/stores/mcpUpdateStore";
 import type {
+  McpApplyResult,
   McpImportLocator,
   McpKind,
   McpServerInput,
@@ -48,15 +47,12 @@ import type {
   ScannedMcp,
 } from "@/types/mcp";
 import type { TargetKind } from "@/types/domain";
-
-const TARGETS: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
-
-const TARGET_LABEL_KEYS: Record<TargetKind, string> = {
-  claude_code: "mcp.targetClaudeCode",
-  codex: "mcp.targetCodex",
-  pi: "mcp.targetPi",
-  prime: "mcp.targetPrime",
-};
+import { ApplyPanel } from "./mcp/ApplyPanel";
+import { SavedMcpList } from "./mcp/SavedMcpList";
+import {
+  MCP_TARGETS as TARGETS,
+  MCP_TARGET_LABEL_KEYS as TARGET_LABEL_KEYS,
+} from "./mcp/targets";
 
 const KIND_OPTIONS: { label: string; value: McpKind }[] = [
   { value: "stdio", label: "stdio" },
@@ -224,6 +220,13 @@ export function McpPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [targetPaths, setTargetPaths] = useState<[TargetKind, string][]>([]);
+  // R1 页签与我的 MCP 过滤（纯 UI 状态，不进 store）。
+  const [activeTab, setActiveTab] = useState("mine");
+  const [mineSearch, setMineSearch] = useState("");
+  const [mineTarget, setMineTarget] = useState<"all" | TargetKind>("all");
+  const [onlyUpdates, setOnlyUpdates] = useState(false);
+  // 最近一次应用结果：应用面板内逐目标展示（modal 结果保留不变）。
+  const [lastApplyResult, setLastApplyResult] = useState<McpApplyResult | null>(null);
   // 「其它客户端已有的 MCP」扫描结果。null = 还没扫描过。
   const [scanOutcome, setScanOutcome] = useState<ScanOutcome | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -716,14 +719,12 @@ export function McpPage() {
     }
   };
 
-  const applyTargets = async (targets: TargetKind[]) => {
-    if (targets.length === 0) {
-      void message.warning(t("mcp.noTargets"));
-      return;
-    }
+  /** 应用面板入口：空选中时按钮已禁用，这里只管写盘、记结果、展示。 */
+  const handleApplySelected = async (targets: TargetKind[]) => {
     setApplying(true);
     try {
       const result = await applyServers(targets);
+      setLastApplyResult(result);
       const failed = result.results.filter((item) => !item.ok);
       if (failed.length === 0) {
         void message.success(t("mcp.applySuccess"));
@@ -740,155 +741,151 @@ export function McpPage() {
     }
   };
 
-  // 列定义只在语言/更新状态/回调变化时重建；输入与其它本地 state 不再让表格重新生成 columns。
-  const columns = useMemo(
-    () => [
-    {
-      title: t("mcp.name"),
-      dataIndex: "name",
-      key: "name",
-      render: (name: string, record: McpServerSummary) => {
-        const status = updateStatuses.find((s) => s.id === record.id);
-        return (
-          <Space size={4}>
-            <Typography.Text strong>{name}</Typography.Text>
-            {status?.hasUpdate && (
-              <Tag color="orange" style={{ fontSize: 11 }}>
-                {t("mcp.hasUpdate")}
-              </Tag>
-            )}
-          </Space>
-        );
-      },
+  // 我的 MCP 过滤：名称子串（大小写不敏感）+ 目标 + 只看可更新。
+  const visibleServers = useMemo(() => {
+    const query = mineSearch.trim().toLowerCase();
+    return servers.filter((server) => {
+      if (query && !server.name.toLowerCase().includes(query)) return false;
+      if (mineTarget !== "all" && !server.targets.includes(mineTarget)) return false;
+      if (
+        onlyUpdates &&
+        !updateStatuses.some((item) => item.id === server.id && item.hasUpdate)
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }, [servers, mineSearch, mineTarget, onlyUpdates, updateStatuses]);
+
+  /** 卡片上的启用开关：直接落库；禁用即从各目标写盘清单摘除（清理走后端 sweep）。 */
+  const handleToggleEnabled = useCallback(
+    async (record: McpServerSummary, enabled: boolean) => {
+      try {
+        const server = await getServer(record.id);
+        const { sweep } = await saveServer({
+          id: server.id,
+          name: server.name,
+          kind: server.kind,
+          enabled,
+          targets: server.targets,
+          config: server.config,
+          env: server.env,
+          headers: server.headers,
+        });
+        void message.success(t("common.success"));
+        showApplyOutcome(sweep);
+      } catch (error) {
+        void message.error(errorText(error));
+      }
     },
-    {
-      title: t("mcp.kind"),
-      dataIndex: "kind",
-      key: "kind",
-      width: 90,
-      render: (item: McpKind) => <Tag>{item}</Tag>,
-    },
-    {
-      title: t("mcp.targets"),
-      dataIndex: "targets",
-      key: "targets",
-      render: (targets: TargetKind[]) =>
-        targets.length === 0 ? (
-          <Typography.Text type="secondary">—</Typography.Text>
-        ) : (
-          <Space size={4} wrap>
-            {targets.map((target) => (
-              <Tag key={target}>{targetLabel(target)}</Tag>
-            ))}
-          </Space>
-        ),
-    },
-    {
-      title: t("mcp.enabled"),
-      dataIndex: "enabled",
-      key: "enabled",
-      width: 90,
-      render: (enabled: boolean) =>
-        enabled ? <Tag color="green">{t("mcp.enabled")}</Tag> : <Tag>{t("mcp.disabled")}</Tag>,
-    },
-    {
-      title: t("common.actions"),
-      key: "actions",
-      render: (_: unknown, record: McpServerSummary) => {
-        const status = updateStatuses.find((s) => s.id === record.id);
-        const isUpdating = updating[record.id] || false;
-        return (
-          <Space size={0}>
-            {status?.hasUpdate && (
-              <Tooltip title={t("mcp.update")}>
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label={t("mcp.update")}
-                  icon={<SyncOutlined spin={isUpdating} />}
-                  loading={isUpdating}
-                  onClick={() => void handleUpdate(record.id)}
-                />
-              </Tooltip>
-            )}
-            <Tooltip title={t("common.edit")}>
-              <Button
-                type="text"
-                size="small"
-                aria-label={t("common.edit")}
-                icon={<EditOutlined />}
-                onClick={() => void openEdit(record.id)}
-              />
-            </Tooltip>
-            <Tooltip title={t("common.delete")}>
-              <Button
-                type="text"
-                size="small"
-                danger
-                aria-label={t("common.delete")}
-                icon={<DeleteOutlined />}
-                onClick={() => handleDelete(record)}
-              />
-            </Tooltip>
-          </Space>
-        );
-      },
-    },
-    ],
-    [t, targetLabel, updateStatuses, updating, handleUpdate, openEdit, handleDelete],
+    [getServer, saveServer, message, showApplyOutcome, t],
   );
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            {t("mcp.title")}
-            {hasAnyUpdate() && (
-              <Tag color="orange" style={{ marginLeft: 8, fontSize: 12 }}>
-                {t("mcp.updatesAvailable", { count: updateCount() })}
-              </Tag>
-            )}
-          </Typography.Title>
-          <Typography.Text type="secondary">{t("mcp.emptyDesc")}</Typography.Text>
-        </div>
-        <Space>
-          <Tooltip title={t("mcp.checkUpdates")}>
-            <Button
-              icon={<ReloadOutlined spin={checking} />}
-              loading={checking}
-              onClick={() => void handleCheckUpdates()}
-            >
-              {t("mcp.checkUpdates")}
-            </Button>
-          </Tooltip>
+      <div>
+        <Typography.Title level={4} style={{ margin: 0 }}>
+          {t("mcp.title")}
           {hasAnyUpdate() && (
-            <Button
-              type="default"
-              icon={<SyncOutlined />}
-              onClick={() => void handleUpdateAll()}
-            >
-              {t("mcp.updateAll")} ({updateCount()})
-            </Button>
+            <Tag color="orange" style={{ marginLeft: 8, fontSize: 12 }}>
+              {t("mcp.updatesAvailable", { count: updateCount() })}
+            </Tag>
           )}
-          <Button
-            type="primary"
-            icon={<CloudUploadOutlined />}
-            loading={applying}
-            disabled={activeTargets.length === 0}
-            onClick={() => void applyTargets(activeTargets)}
-          >
-            {t("mcp.applyToTargets")}
-          </Button>
-          <Tooltip title={t("mcp.manualAddHint")}>
-            <Button icon={<PlusOutlined />} onClick={openCreate}>
-              {t("mcp.manualAdd")}
-            </Button>
-          </Tooltip>
-        </Space>
+        </Typography.Title>
+        <Typography.Text type="secondary">{t("mcp.emptyDesc")}</Typography.Text>
       </div>
 
-      {/* 主入口：从官方仓库装 */}
+      <Tabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        destroyOnHidden
+        items={[
+          {
+            key: "mine",
+            label: t("mcp.tabMine", { count: servers.length }),
+            children: (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    value={mineSearch}
+                    onChange={(event) => setMineSearch(event.target.value)}
+                    placeholder={t("mcp.mineSearchPlaceholder")}
+                    allowClear
+                    style={{ width: 220 }}
+                  />
+                  <Select
+                    value={mineTarget}
+                    style={{ width: 140 }}
+                    onChange={(value) => setMineTarget(value as "all" | TargetKind)}
+                    options={[
+                      { value: "all", label: t("mcp.allTargets") },
+                      ...TARGETS.map((target) => ({
+                        value: target,
+                        label: targetLabel(target),
+                      })),
+                    ]}
+                  />
+                  <Checkbox
+                    checked={onlyUpdates}
+                    onChange={(event) => setOnlyUpdates(event.target.checked)}
+                  >
+                    {t("mcp.onlyUpdates")}
+                  </Checkbox>
+                  <span style={{ flex: 1 }} />
+                  <Tooltip title={t("mcp.checkUpdates")}>
+                    <Button
+                      icon={<ReloadOutlined spin={checking} />}
+                      loading={checking}
+                      onClick={() => void handleCheckUpdates()}
+                    >
+                      {t("mcp.checkUpdates")}
+                    </Button>
+                  </Tooltip>
+                  {hasAnyUpdate() && (
+                    <Button
+                      type="default"
+                      icon={<SyncOutlined />}
+                      onClick={() => void handleUpdateAll()}
+                    >
+                      {t("mcp.updateAll")} ({updateCount()})
+                    </Button>
+                  )}
+                  <Tooltip title={t("mcp.manualAddHint")}>
+                    <Button icon={<PlusOutlined />} onClick={openCreate}>
+                      {t("mcp.manualAdd")}
+                    </Button>
+                  </Tooltip>
+                </div>
+
+                <SavedMcpList
+                  servers={visibleServers}
+                  hasAnyServer={servers.length > 0}
+                  loading={loading}
+                  updateStatuses={updateStatuses}
+                  updating={updating}
+                  targetLabel={targetLabel}
+                  onEdit={(id) => void openEdit(id)}
+                  onDelete={handleDelete}
+                  onUpdate={(id) => void handleUpdate(id)}
+                  onToggleEnabled={(record, enabled) => void handleToggleEnabled(record, enabled)}
+                />
+
+                <ApplyPanel
+                  enabledCount={servers.filter((server) => server.enabled).length}
+                  activeTargets={activeTargets}
+                  targetPaths={targetPaths}
+                  targetLabel={targetLabel}
+                  applying={applying}
+                  lastResult={lastApplyResult}
+                  onApply={(targets) => void handleApplySelected(targets)}
+                />
+              </div>
+            ),
+          },
+          {
+            key: "registry",
+            label: t("mcp.tabRegistry"),
+            children: (
       <Card
         size="small"
         title={
@@ -1004,7 +1001,12 @@ export function McpPage() {
           </Typography.Text>
         </div>
       </Card>
-
+            ),
+          },
+          {
+            key: "scan",
+            label: t("mcp.tabScan", { count: importable.length }),
+            children: (
       <Card
         size="small"
         title={
@@ -1131,21 +1133,10 @@ export function McpPage() {
           </Typography.Text>
         </div>
       </Card>
-
-      {servers.length === 0 && !loading ? (
-        <Card>
-          <Empty description={t("mcp.emptyTitle")} />
-        </Card>
-      ) : (
-        <Table
-          columns={columns}
-          dataSource={servers}
-          rowKey="id"
-          loading={loading}
-          pagination={false}
-          size="small"
-        />
-      )}
+            ),
+          },
+        ]}
+      />
 
       <Card size="small" styles={{ body: { display: "flex", gap: 8, alignItems: "flex-start" } }}>
         <InfoCircleOutlined style={{ color: token.colorTextTertiary, marginTop: 2 }} />

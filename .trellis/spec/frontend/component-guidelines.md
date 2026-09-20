@@ -93,3 +93,13 @@ function errorText(error: unknown): string {
 - 删/改操作前不确认就执行——破坏性动作走 `modal.confirm`。
 - 用 `destroyOnClose`（已弃用），应用 `destroyOnHidden`。
 - 在 `Modal` 外部用 `Form.useForm()` 却在弹窗关闭后不清表单——配合 `destroyOnHidden` 即可。
+
+## 页签隔离（Tabs）
+
+多页签页用 `Tabs` + `destroyOnHidden`，非激活页签不挂载：各页签状态互不串扰，
+测试可用懒挂载断言（切到某页签前其内容不在 DOM 里）。实例：MCP 页三页签
+（`src/pages/McpPage.tsx`）。
+
+> **注意**：渲染期按条件同步 `setState`（如“props 变了就重置选中项”）是 React 官方允许的
+> render 期调整模式，不要自作聪明改成 `useEffect` 回写——那会多闪一帧。实例：
+> `src/pages/mcp/ApplyPanel.tsx:41-46`。

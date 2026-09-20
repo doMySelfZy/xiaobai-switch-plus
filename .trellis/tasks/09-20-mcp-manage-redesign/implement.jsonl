@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "McpPage按区块拆分与Modal表单约定（P1布局重做）"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "mcpStore/mcpUpdateStore与Tauri command调用边界"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "mcp.文案i18n双语与前端测试口径"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端兼容红线、cargo test必跑、clippy增量口径、禁cargo fmt"}
+{"file": ".trellis/spec/backend/webdav-sync.md", "reason": "mcp_servers须留在FINGERPRINT_TABLES，否则变更不触发同步"}
+{"file": "AGENTS.md", "reason": "MCP统一管控权威约束：四目标原生位置、xiaobai_前缀、备份原子锁、扫描只回元数据、等价接管"}
