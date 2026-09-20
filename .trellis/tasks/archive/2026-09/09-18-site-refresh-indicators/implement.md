@@ -71,41 +71,14 @@ get().setRefreshingSiteIds([siteId]);
 **CSS 动画（已有 Tailwind `animate-spin`，可直接使用）：**
 - 如需自定义淡入淡出：在组件上添加 `transition-opacity duration-200`
 
-### 4. 跨窗口同步（`src/lib/sync.ts` / store 初始化）
+### 4. 跨窗口同步（已过时，已按实际架构修正）
 
-**确认 `refreshingSiteIds` 包含在同步字段中：**
-```ts
-// 在 syncStoreToFloating 或 siteStore 的 persist 配置中
-// 确保 refreshingSiteIds 被序列化（Set 需要转为数组）
-```
-
-**注意：**
-- Zustand persist 默认不支持 `Set`，需要在 `storage` 中自定义序列化：
-  ```ts
-  storage: {
-    getItem: (name) => {
-      const str = localStorage.getItem(name);
-      if (!str) return null;
-      const { state } = JSON.parse(str);
-      return {
-        state: {
-          ...state,
-          refreshingSiteIds: new Set(state.refreshingSiteIds || [])
-        }
-      };
-    },
-    setItem: (name, value) => {
-      const { state } = value;
-      localStorage.setItem(name, JSON.stringify({
-        state: {
-          ...state,
-          refreshingSiteIds: Array.from(state.refreshingSiteIds || [])
-        }
-      }));
-    },
-    removeItem: (name) => localStorage.removeItem(name)
-  }
-  ```
+> 原计划里的 `syncStoreToFloating` 不存在，且 `refreshingSiteIds` 不进 persist。
+> 实际口径：`refreshingSiteIds` 是内存 `string[]`（主窗口 zustand 状态），
+> 跨窗口不直接同步该集合——悬浮窗只读后端余额缓存：
+> 统一刷新 / 单刷的余额腿走 `refresh_site_quota`（写后端缓存），完成后 emit
+> `sites-refresh-finished`，悬浮窗重读 `get_all_sites_quota`。因此无需 persist
+> 序列化，也无需自定义 `storage`（`Set` 方案已废弃，改用 `string[]` + `includes`）。
 
 ### 5. 测试检查点
 
