@@ -61,3 +61,20 @@ rustfmt 默认，仅 `lib.rs` 就有 795 行 rustfmt 想动，而它单次任务
   这类脚本要打印中间量（"解析到 N 个文件的新增行"），确认 N 非零再信结论。
 
 **Language**: 文档用中文写；代码标识符、路径、命令保持原文。
+
+---
+
+## 本地 NSIS 构建验证（实测口径，2026-09-20）
+
+- 命令：`pnpm tauri build --bundles nsis`（仅 NSIS；`tauri.conf.json` 默认
+  `targets: all` 会连打 MSI，耗时翻倍）。
+- **Gotcha：无 `TAURI_SIGNING_PRIVATE_KEY` 时构建尾部 updater 签名报 exit 1，
+  但 NSIS `.exe` 已产出**——先看 `src-tauri/target/release/bundle/nsis/` 有无产物
+  再判失败，不要只看退出码（updater 签名链路与安装包验证无关）。
+- 开打前确认版本三处一致：`package.json` / `src-tauri/tauri.conf.json` /
+  `src-tauri/Cargo.toml`（本次 0.1.6）。
+- 覆盖安装前先备份注册表 `InstallLocation` 与数据目录实际解析路径
+  （`XIAOBAI_SWITCH_DATA_DIR` → `ANY_SWITCH_DATA_DIR` → `~/.xiaobai-switch`）；
+  NSIS `/S` 静默安装会沿用注册表旧路径，不会产生第二份安装。
+- 启动验证口径：进程存活 + `MainWindowHandle` 非零 + `Responding` +
+  站点库只读可查；无截图手段时如实声明图像断言缺失，不虚报。
