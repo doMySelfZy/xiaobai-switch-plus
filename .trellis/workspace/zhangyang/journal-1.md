@@ -541,3 +541,25 @@ CLI 配置里的口令不一致，表现为四个 CLI 全部 404。
 - 发布说明须写明：ZCode 目标已移除；本应用写进 ~/.zcode 的条目与托管块会在升级启动时自动清一次（写前有备份），用户自己的 ZCode 配置不动；同版本用户应与本版本一起升级（design §6 的跨机口径）
 - 本分支与在飞 M1 站点预置、M2 魔搭余额共用 5 个文件，并入 main 时 src-tauri/src/domain/mod.rs、quota_probe/mod.rs、src/lib/browserMock.ts、中英 locale 是冲突热区
 - 两份 locale 的顶层 rules 与 proxy 各重复出现两次（内容逐键相同、后写覆盖），本次删键已在 4 个块各删一次；建议单独立任务合并去重
+
+
+## Session 19: 站点全局刷新独立指示器实现与修复
+<!-- trellis-session: v=2 fp=1207bfb6731063fa -->
+
+**Date**: 2026-09-20
+**Task**: 站点全局刷新独立指示器实现与修复
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+实现站点行级刷新指示器并修复余额单刷缓存、退出动画与全局并集语义，校验通过后归档
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `63a0b28` | feat(sites): 全局刷新独立指示器，单刷统一与退出动画 |
+
+### Status
+
+[OK] **Completed**
