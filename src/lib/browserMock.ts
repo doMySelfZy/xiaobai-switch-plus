@@ -232,6 +232,9 @@ const INITIAL_SCANNED_MCP: ScannedMcp[] = [
     envKeys: [],
     headerKeys: [],
     importedId: null,
+    // 冲突/接管预告由 scan_existing_mcp 按库内现状计算，这里只给初值。
+    nameConflict: false,
+    adoptable: false,
   },
   {
     target: "claude_code",
@@ -243,6 +246,8 @@ const INITIAL_SCANNED_MCP: ScannedMcp[] = [
     envKeys: ["DB_URL"],
     headerKeys: [],
     importedId: null,
+    nameConflict: false,
+    adoptable: false,
   },
   {
     target: "codex",
@@ -254,9 +259,56 @@ const INITIAL_SCANNED_MCP: ScannedMcp[] = [
     envKeys: [],
     headerKeys: [],
     importedId: null,
+    nameConflict: false,
+    adoptable: false,
   },
 ];
 let scannedMcp: ScannedMcp[] = INITIAL_SCANNED_MCP.map((entry) => ({ ...entry }));
+
+/**
+ * 后端 `mcp_identity::coarse_identity` 的相等性镜像（浏览器 mock 用）。
+ *
+ * 同样的剔除口径（type/transport/enabled/timeoutMs）+ 同样的命令归一化 +
+ * 同样的稳定序列化；后端回的是 sha256 hex，这里直接比对规范串——相等关系一致，
+ * 足以镜像纳管标注、冲突预告与接管预告。哈希只防明文外泄，mock 里本就没有值。
+ */
+const MCP_CLIENT_PRIVATE_FIELDS = ["type", "transport", "enabled", "timeoutMs"];
+
+function mockNormalizeCommand(command: string): string {
+  const base = command.split(/[/\\]/).pop() ?? command;
+  const lower = base.toLowerCase();
+  for (const ext of ["cmd", "exe", "bat", "com"]) {
+    if (lower.endsWith(`.${ext}`) && lower.length > ext.length + 1) {
+      return lower.slice(0, -(ext.length + 1));
+    }
+  }
+  return lower;
+}
+
+function mockCanonical(value: unknown): string {
+  if (value === null || value === undefined) return "null";
+  if (Array.isArray(value)) return `[${value.map(mockCanonical).join(",")}]`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, item]) => `${key}=${mockCanonical(item)}`);
+    return `{${entries.join(",")}}`;
+  }
+  if (typeof value === "string") return `s:${value}`;
+  if (typeof value === "number") return `n:${value}`;
+  if (typeof value === "boolean") return `b:${value}`;
+  return "null";
+}
+
+function mockCoarseKey(kind: string, config: Record<string, unknown>): string {
+  const comparable: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config ?? {})) {
+    if (MCP_CLIENT_PRIVATE_FIELDS.includes(key)) continue;
+    comparable[key] =
+      key === "command" && typeof value === "string" ? mockNormalizeCommand(value) : value;
+  }
+  return `${kind}\n${mockCanonical(comparable)}`;
+}
 let agentRules: AgentRules = { body: "", targets: [], updatedAt: 0 };
 
 /** 浏览器模式下全局约束的落点样例，覆盖「已存在」与「尚未创建」两种状态。 */
@@ -2045,19 +2097,44 @@ export async function handleBrowserCommand<T>(
       return result as T;
     }
     case "scan_existing_mcp": {
-      // 与已保存的 MCP 比对，标出已纳管项（真实实现同样由后端比对）。
+      // 与后端 scan_existing_mcp 同口径：身份优先、名字兜底，另附冲突/接管预告。
       const entries = scannedMcp.map((entry) => {
-        const existing = mcpServers.find(
-          (server) => server.name.toLowerCase() === entry.name.toLowerCase(),
+        const key = mockCoarseKey(entry.kind, entry.config);
+        const name = entry.name.toLowerCase();
+        const byIdentity = mcpServers.find(
+          (server) => mockCoarseKey(server.kind, server.config) === key,
         );
-        return { ...entry, importedId: existing?.id ?? null };
+        const byName = mcpServers.find(
+          (server) => server.name.toLowerCase() === name,
+        );
+        const matched = byIdentity ?? byName;
+        const nameConflict = byName !== undefined && byIdentity === undefined;
+        const adoptable =
+          !entry.managed &&
+          !nameConflict &&
+          byIdentity !== undefined &&
+          byIdentity.enabled &&
+          (byIdentity.targets as string[]).includes(entry.target);
+        return { ...entry, importedId: matched?.id ?? null, nameConflict, adoptable };
       });
       const outcome: ScanOutcome = { entries, warnings: [] };
       return outcome as T;
     }
     case "import_scanned_mcp": {
       const locators = (args?.locators ?? []) as McpImportLocator[];
-      const result: McpImportResult = { imported: [], failed: [] };
+      const result: McpImportResult = { imported: [], failed: [], alreadyImported: [] };
+      // 与后端 scan_target_union 同口径：纳管即关联到当前存在同款配置的所有客户端（只设关联，不写盘）。
+      const targetOrder: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
+      const identityTargets = new Map<string, TargetKind[]>();
+      for (const item of scannedMcp) {
+        const key = mockCoarseKey(item.kind, item.config);
+        const target = item.target as TargetKind;
+        const list = identityTargets.get(key) ?? [];
+        if (!list.includes(target)) list.push(target);
+        identityTargets.set(key, list);
+      }
+      const orderedUnion = (key: string): TargetKind[] =>
+        targetOrder.filter((t) => (identityTargets.get(key) ?? []).includes(t));
       for (const locator of locators) {
         const entry = scannedMcp.find(
           (item) => item.target === locator.target && item.key === locator.key,
@@ -2066,13 +2143,35 @@ export async function handleBrowserCommand<T>(
           result.failed.push({ ...locator, message: "entry not found" });
           continue;
         }
+        // 与后端 import_entry 同序：先判粗身份（命中只回指已有行），再走重名校验。
+        const hit = mcpServers.find(
+          (server) => mockCoarseKey(server.kind, server.config) === mockCoarseKey(entry.kind, entry.config),
+        );
+        if (hit) {
+          result.alreadyImported.push({
+            target: entry.target,
+            key: entry.key,
+            existingId: hit.id,
+            existingName: hit.name,
+          });
+          continue;
+        }
+        if (
+          mcpServers.some((server) => server.name.toLowerCase() === entry.name.toLowerCase())
+        ) {
+          result.failed.push({
+            ...locator,
+            message: `another MCP server is already named '${entry.name}'`,
+          });
+          continue;
+        }
         const timestamp = now();
         const saved: McpServer = {
           id: uid(),
           name: entry.name,
           kind: entry.kind,
           enabled: true,
-          targets: [],
+          targets: orderedUnion(mockCoarseKey(entry.kind, entry.config)),
           config: entry.config,
           env: {},
           headers: {},

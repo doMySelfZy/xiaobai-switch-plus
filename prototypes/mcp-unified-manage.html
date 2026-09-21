@@ -149,7 +149,7 @@
     <h1>MCP 服务</h1>
     <span class="upd-badge" onclick="toast('演示：跳到有更新的条目')">2 个可更新</span>
   </div>
-  <p class="page-desc">在一个页面里统一管理四个客户端的 MCP。卡片上直接开关每个客户端，改动立即写盘；同名冲突会当场提示，绝不重复加载。</p>
+  <p class="page-desc">在一个页面里统一管理四个客户端的 MCP。打开自动扫描，本工具管的和你直接在客户端手配的都列在这里；卡片上直接开关每个客户端，改动立即写盘；同名冲突当场提示，绝不重复加载。</p>
 
   <!-- toolbar -->
   <div class="toolbar">
@@ -179,8 +179,7 @@
     <div class="body">
       <div class="source-tabs">
         <div class="source-tab on" onclick="srcTab(this,'manual')"><div class="st-icon">✎</div><div class="st-title">手动填写</div><div class="st-desc">自己填命令/地址</div></div>
-        <div class="source-tab" onclick="srcTab(this,'registry')"><div class="st-icon">⬇</div><div class="st-title">从仓库安装</div><div class="st-desc">搜索官方 MCP</div></div>
-        <div class="source-tab" onclick="srcTab(this,'scan')"><div class="st-icon">⇲</div><div class="st-title">扫描纳管</div><div class="st-desc">接管已配好的</div></div>
+        <div class="source-tab" onclick="srcTab(this,'registry')"><div class="st-icon">⬇</div><div class="st-title">从仓库安装</div><div class="st-desc">搜索官方注册表</div></div>
       </div>
 
       <!-- manual pane -->
@@ -213,43 +212,14 @@
 
       <!-- registry pane -->
       <div class="pane" id="pane-registry">
-        <div class="search" style="margin-bottom:12px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" placeholder="搜索官方仓库，如 github / postgres…"></div>
-        <div class="reg-row">
-          <div class="rr-main">
-            <div class="rr-name">github <span class="kind-tag" style="margin-left:4px">stdio</span> <span style="font-size:11px;color:var(--orange-text)">需 1 个密钥</span></div>
-            <div class="rr-desc">GitHub 官方 MCP，读写仓库/Issue/PR</div>
-            <code>npx -y @modelcontextprotocol/server-github</code>
-          </div>
-          <button class="btn primary small">安装</button>
-        </div>
-        <div class="reg-row">
-          <div class="rr-main">
-            <div class="rr-name">fetch <span class="kind-tag" style="margin-left:4px">stdio</span> <span style="font-size:11px;color:var(--green-text)">免密钥</span></div>
-            <div class="rr-desc">抓取网页并转成 markdown</div>
-            <code>uvx mcp-server-fetch</code>
-          </div>
-          <button class="btn primary small">安装</button>
-        </div>
-        <p class="hint" style="margin-top:8px">点「安装」后：需密钥的会让你填密钥；免密钥的直接选客户端装上。</p>
-      </div>
-
-      <!-- scan pane -->
-      <div class="pane" id="pane-scan">
-        <p class="hint" style="margin-bottom:12px">扫描到你在各客户端里手工配过、但还没被本工具纳管的 MCP。纳管后就能在上面的清单里统一开关。</p>
-        <div class="reg-row">
-          <div class="rr-main">
-            <div class="rr-name">playwright <span class="kind-tag">在 Codex</span></div>
-            <div class="rr-desc"><code>npx @playwright/mcp@latest</code></div>
-          </div>
-          <button class="btn primary small">纳管</button>
-        </div>
-        <div class="reg-row" style="border-color:var(--orange-border);background:var(--orange-bg)">
-          <div class="rr-main">
-            <div class="rr-name">memory <span class="kind-tag">在 Claude</span> <span style="font-size:11px;color:var(--orange-text)">与库内定义不一致</span></div>
-            <div class="rr-desc">你纳管后又在 Claude 里手工改过它，纳管会跳过以免覆盖你的改动。</div>
-          </div>
-          <button class="btn small">对比差异</button>
-        </div>
+        <div class="search" style="margin-bottom:12px"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input type="text" id="regSearch" placeholder="搜索官方注册表，如 github / postgres…" oninput="regInput(this.value)"></div>
+        <div id="regLabel" style="font-size:12px;color:var(--text-3);margin-bottom:8px">常用推荐（按常见类目拉取，非热度排行）</div>
+        <div id="regResults"></div>
+        <p class="hint" style="margin-top:8px">点「安装」后：需密钥的会让你填密钥；免密钥的直接装上（默认四客户端全装，可在卡片上调）。</p>
+        <p class="hint" style="margin-top:4px;display:flex;gap:6px;align-items:flex-start">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-top:2px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+          来源：官方 MCP 注册表 registry.modelcontextprotocol.io。未搜索时按常见类目给一批「常用推荐」——注册表不提供下载量/热度字段，所以没有真实排行榜。
+        </p>
       </div>
     </div>
     <footer>
@@ -280,8 +250,7 @@
       <button class="btn" onclick="closeMask('conflictMask')">取消</button>
       <div style="display:flex;gap:8px">
         <button class="btn" onclick="resolveConflict('skip')">该客户端先跳过</button>
-        <button class="btn" onclick="resolveConflict('theirs')">用客户端的（反向入库）</button>
-        <button class="btn primary" onclick="resolveConflict('mine')">用我的覆盖</button>
+        <button class="btn primary" onclick="resolveConflict('theirs')">用客户端的（反向入库）</button>
       </div>
     </footer>
   </div>
@@ -313,6 +282,9 @@
       clients: { claude: "off", codex: "off", pi: "off", prime: "off" } },
     { name: "sentry", kind: "http", cmd: "https://mcp.sentry.dev/sse", enabled: true,
       clients: { claude: "on", codex: "off", pi: "on", prime: "off" } },
+    // 未纳管：你直接在客户端手写、本工具还不认识的野生条目。自动扫描发现，就地纳管。
+    { name: "playwright", kind: "stdio", cmd: "npx @playwright/mcp@latest", unmanaged: true, foundIn: ["codex"] },
+    { name: "time", kind: "stdio", cmd: "uvx mcp-server-time", unmanaged: true, foundIn: ["claude", "pi"] },
   ];
 
   function clientToggleHtml(m, c) {
@@ -326,7 +298,31 @@
     </div>`;
   }
 
+  function unmanagedCardHtml(m) {
+    const where = m.foundIn.map(k => CLIENTS.find(c => c.key === k)?.name || k).join("、");
+    return `<div class="mcp" data-name="${m.name}" style="border-style:dashed">
+      <div class="mcp-top">
+        <div class="mcp-id">
+          <div class="mcp-name-row">
+            <span class="mcp-name">${m.name}</span>
+            <span class="kind-tag">${m.kind}</span>
+            <span class="kind-tag" style="background:#f0f0f0;color:var(--text-3)">未纳管 · 在 ${where}</span>
+          </div>
+          <code class="mcp-cmd">${m.cmd}</code>
+        </div>
+        <div class="mcp-master">
+          <button class="btn primary small" onclick="toast('演示：纳管 ${m.name}，收编进统一清单')">纳管</button>
+        </div>
+      </div>
+      <div class="upd-line" style="color:var(--text-3)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        这是你直接在客户端配的、本工具还没接管的 MCP。纳管后就能在这里统一开关四个客户端。
+      </div>
+    </div>`;
+  }
+
   function cardHtml(m) {
+    if (m.unmanaged) return unmanagedCardHtml(m);
     const conflictClient = Object.keys(m.clients).find(k => m.clients[k] === "conflict");
     return `<div class="mcp ${m.enabled?'':'disabled'} ${conflictClient?'conflict':''}" data-name="${m.name}">
       <div class="mcp-top">
@@ -361,7 +357,14 @@
 
   function render() {
     const list = document.getElementById("list");
-    list.innerHTML = DATA.map(cardHtml).join("") || `<div class="note" style="justify-content:center">还没有 MCP，点右上角「添加 MCP」</div>`;
+    const managed = DATA.filter(m => !m.unmanaged);
+    const unmanaged = DATA.filter(m => m.unmanaged);
+    let html = managed.map(cardHtml).join("");
+    if (unmanaged.length) {
+      html += `<div class="divider">扫描到 ${unmanaged.length} 个未纳管的 MCP（你直接在客户端配的） · <a href="#" onclick="toast('演示：全部纳管');return false" style="color:var(--primary);text-decoration:none">全部纳管</a></div>`;
+      html += unmanaged.map(cardHtml).join("");
+    }
+    list.innerHTML = html || `<div class="note" style="justify-content:center">还没有 MCP，点右上角「添加 MCP」</div>`;
   }
 
   function toggleClient(name, ck) {
@@ -387,7 +390,53 @@
     el.classList.add("on");
     document.querySelectorAll(".pane").forEach(p => p.classList.remove("on"));
     document.getElementById("pane-" + key).classList.add("on");
+    if (key === "registry") renderRegistry("");
   }
+
+  // 官方注册表条目（演示数据）。真实实现走后端 search_url → registry.modelcontextprotocol.io
+  const REGISTRY = [
+    { name: "github", kind: "stdio", secret: 1, desc: "GitHub 官方 MCP，读写仓库/Issue/PR", cmd: "npx -y @modelcontextprotocol/server-github", tags: ["github", "git"] },
+    { name: "fetch", kind: "stdio", secret: 0, desc: "抓取网页并转成 markdown", cmd: "uvx mcp-server-fetch", tags: ["fetch", "web", "browser"] },
+    { name: "filesystem", kind: "stdio", secret: 0, desc: "读写本地文件系统", cmd: "npx -y @modelcontextprotocol/server-filesystem", tags: ["filesystem", "file"] },
+    { name: "postgres", kind: "stdio", secret: 1, desc: "查询 PostgreSQL 数据库", cmd: "npx -y @modelcontextprotocol/server-postgres", tags: ["postgres", "database", "sql"] },
+    { name: "memory", kind: "stdio", secret: 0, desc: "跨会话的知识图谱记忆", cmd: "npx -y @modelcontextprotocol/server-memory", tags: ["memory"] },
+    { name: "brave-search", kind: "stdio", secret: 1, desc: "Brave 搜索引擎", cmd: "npx -y @modelcontextprotocol/server-brave-search", tags: ["search", "web"] },
+    { name: "sentry", kind: "http", secret: 1, desc: "Sentry 错误监控", cmd: "https://mcp.sentry.dev/sse", tags: ["sentry", "monitor"] },
+  ];
+  const RECOMMENDED = ["github", "fetch", "filesystem", "postgres", "memory"];
+
+  function regRowHtml(r) {
+    const secretTag = r.secret > 0
+      ? `<span style="font-size:11px;color:var(--orange-text)">需 ${r.secret} 个密钥</span>`
+      : `<span style="font-size:11px;color:var(--green-text)">免密钥</span>`;
+    return `<div class="reg-row">
+      <div class="rr-main">
+        <div class="rr-name">${r.name} <span class="kind-tag" style="margin-left:4px">${r.kind}</span> ${secretTag}</div>
+        <div class="rr-desc">${r.desc}</div>
+        <code>${r.cmd}</code>
+      </div>
+      <button class="btn primary small" onclick="toast('演示：安装 ${r.name}${r.secret>0?'（先填密钥）':'（默认四客户端全装）'}')">安装</button>
+    </div>`;
+  }
+
+  function renderRegistry(query) {
+    const q = query.trim().toLowerCase();
+    const label = document.getElementById("regLabel");
+    const box = document.getElementById("regResults");
+    let rows;
+    if (!q) {
+      label.textContent = "常用推荐（按常见类目拉取，非热度排行）";
+      rows = REGISTRY.filter(r => RECOMMENDED.includes(r.name));
+    } else {
+      label.textContent = `搜索“${query.trim()}”的结果`;
+      rows = REGISTRY.filter(r => r.name.toLowerCase().includes(q) || r.tags.some(t => t.includes(q)) || r.desc.toLowerCase().includes(q));
+    }
+    box.innerHTML = rows.length
+      ? rows.map(regRowHtml).join("") + (q ? `<button class="btn small" style="margin-top:4px" onclick="toast('演示：翻页 cursor 加载更多')">加载更多</button>` : "")
+      : `<div class="note" style="justify-content:center">注册表里没有匹配“${query.trim()}”的 MCP</div>`;
+  }
+
+  function regInput(v) { renderRegistry(v); }
 
   let conflictCtx = null;
   function openConflict(name, ck) {
@@ -397,7 +446,7 @@
     const cname = CLIENTS.find(c => c.key === ck)?.name || ck;
     document.getElementById("cf-title").textContent = `解决冲突 · ${name}`;
     document.getElementById("cf-client").textContent = cname;
-    document.getElementById("cf-desc").textContent = `${cname} 里已有一个同名、你手工配置的 ${name}，和库里的定义不一致。选一种处理方式，只影响 ${cname} 这一个客户端。`;
+    document.getElementById("cf-desc").textContent = `${cname} 里已有一个同名、你手工配置的 ${name}，和库里的定义不一致。为保护你的手改，本工具不会用库里的版本覆盖它——你可以把 ${cname} 的定义反向入库让两边一致，或先跳过这个客户端。仅影响 ${cname}。`;
     document.getElementById("cf-mine").textContent = m.mineDef || "（库里的定义）";
     document.getElementById("cf-theirs").textContent = m.theirsDef || "（客户端里的定义）";
     document.getElementById("conflictMask").classList.add("show");
@@ -408,7 +457,6 @@
     const m = DATA.find(x => x.name === name);
     const cname = CLIENTS.find(c => c.key === ck)?.name || ck;
     if (m) {
-      if (how === "mine")   { m.clients[ck] = "on";  toast(`已用库里的定义覆盖 ${cname}`); }
       if (how === "theirs") { m.clients[ck] = "on";  toast(`已把 ${cname} 里的定义反向入库，两边一致`); }
       if (how === "skip")   { m.clients[ck] = "off"; toast(`${cname} 已跳过，未改动你的手工配置`); }
     }

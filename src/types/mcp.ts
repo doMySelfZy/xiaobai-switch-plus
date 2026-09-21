@@ -123,6 +123,16 @@ export interface ScannedMcp {
   headerKeys: string[];
   /** 非空表示已纳管过，界面不该重复提供纳管。 */
   importedId?: string | null;
+  /**
+   * 同名冲突：库里有同归一化名的记录，但粗身份不同。
+   * 导了撞重名校验、应用了撞接管校验，界面直接跳过、不提供纳管。
+   */
+  nameConflict: boolean;
+  /**
+   * 等价可接管：按粗身份命中库内记录，该记录启用并覆盖本目标。
+   * 下次应用删未托管写托管；只是展示预告，删写仍由后端严格判定。
+   */
+  adoptable: boolean;
 }
 
 export interface ScanWarning {
@@ -146,7 +156,20 @@ export interface McpImportFailure {
   message: string;
 }
 
+/**
+ * 纳管时命中库内已有行粗身份的条目：只回定位符与已有行的 id/名字，
+ * 不含 config/env/headers——不建行、不动已有行。
+ */
+export interface AlreadyImportedMcp {
+  target: ScanTarget;
+  key: string;
+  existingId: string;
+  existingName: string;
+}
+
 export interface McpImportResult {
   imported: McpServerSummary[];
   failed: McpImportFailure[];
+  /** 命中已有行粗身份、被跳过而未建行的条目（failed 只表示真错误）。 */
+  alreadyImported: AlreadyImportedMcp[];
 }

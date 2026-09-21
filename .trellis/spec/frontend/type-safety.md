@@ -78,6 +78,18 @@ export function targetKindLabelKey(kind: TargetKind): "apply.targetClaude" | …
 后端新增字段一律带 `#[serde(default)]`，前端类型标可选并在读取处给默认值——
 老数据库/老备份反序列化时不会炸。
 
+实测（MCP 扫描标注，2026-09-20）：`ScannedMcp` 新增 `name_conflict` /
+`adoptable` 均带 `#[serde(default)]`（`mcp_scan.rs:57-67`），旧载荷可读；
+前端 `McpImportResult.alreadyImported` 做容错读取
+（`result.alreadyImported?.length ?? 0`，`McpPage.tsx:658`）。
+`adoptable` 只是只读预告，真正的接管判决仍由应用时的 `can_take_over` 做——
+预览标注不得当作写盘依据。
+
+`browserMock` 里凡是镜像后端判定口径的函数（如 `mockCoarseKey` 镜像
+`mcp_identity.rs` 的粗身份：剔除私有字段 + 命令归一化 + 稳定序列化），其
+私有字段表必须与后端 `CLIENT_PRIVATE_FIELDS` 逐字一致；改一边时两边一起改，
+否则单测在 mock 里全绿、真机上行为分叉。
+
 ## 与 Rust 的对应关系
 
 | Rust | TypeScript |

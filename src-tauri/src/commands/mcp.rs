@@ -479,7 +479,41 @@ pub fn scan_existing_mcp(
     Ok(outcome)
 }
 
+/// ScanTarget 与 TargetKind 取值一一对应（前端同样复用展示名）。
+fn scan_target_kind(target: crate::adapters::mcp_scan::ScanTarget) -> TargetKind {
+    match target {
+        crate::adapters::mcp_scan::ScanTarget::ClaudeCode => TargetKind::ClaudeCode,
+        crate::adapters::mcp_scan::ScanTarget::Codex => TargetKind::Codex,
+        crate::adapters::mcp_scan::ScanTarget::Pi => TargetKind::Pi,
+        crate::adapters::mcp_scan::ScanTarget::Prime => TargetKind::Prime,
+    }
+}
+
+/// 按粗身份聚合扫描条目所在的目标：纳管时据此把新行关联到所有已存在同款配置的客户端。
+///
+/// 只看 `kind + config`（`coarse_identity` 的口径），env/headers 的值不参与——同一份启动配置
+/// 在不同客户端里各带各的密钥是常态，不该因此被判成不同服务。目标顺序按四端固定序去重，稳定可测。
+fn scan_target_union(
+    entries: &[crate::adapters::mcp_scan::ScannedMcp],
+) -> std::collections::HashMap<String, Vec<TargetKind>> {
+    let mut map: std::collections::HashMap<String, Vec<TargetKind>> =
+        std::collections::HashMap::new();
+    for entry in entries {
+        let identity = mcp_identity::coarse_identity(entry.kind, &entry.config);
+        let target = scan_target_kind(entry.target);
+        let targets = map.entry(identity).or_default();
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    map
+}
+
 /// 给扫描结果标注库内同一条目的 id（见 `scan_existing_mcp` 的两级匹配规则）。
+///
+/// 另附两份 R3 预告（只读，不影响纳管/应用判定）：
+/// - `name_conflict`：同名但粗身份不同——导了撞重名校验，应用了撞接管校验，界面直接跳过；
+/// - `adoptable`：身份命中的记录启用且覆盖本目标——下次应用删未托管写托管，界面预告接管。
 fn mark_imported_entries(
     entries: &mut [crate::adapters::mcp_scan::ScannedMcp],
     servers: &[McpServer],
@@ -487,11 +521,21 @@ fn mark_imported_entries(
     for entry in entries.iter_mut() {
         let identity = mcp_identity::coarse_identity(entry.kind, &entry.config);
         let name = entry.name.to_lowercase();
-        entry.imported_id = servers
+        let by_identity = servers
             .iter()
-            .find(|server| mcp_identity::coarse_identity(server.kind, &server.config) == identity)
-            .or_else(|| servers.iter().find(|server| server.name.to_lowercase() == name))
+            .find(|server| mcp_identity::coarse_identity(server.kind, &server.config) == identity);
+        let by_name = servers
+            .iter()
+            .find(|server| server.name.to_lowercase() == name);
+        entry.imported_id = by_identity
+            .or(by_name)
             .map(|server| server.id.clone());
+        entry.name_conflict = by_name.is_some() && by_identity.is_none();
+        entry.adoptable = !entry.managed
+            && !entry.name_conflict
+            && by_identity.is_some_and(|server| {
+                server.enabled && server.targets.contains(&scan_target_kind(entry.target))
+            });
     }
 }
 
@@ -532,6 +576,7 @@ pub struct McpImportResult {
 }
 
 /// 单条纳管的两种归宿。`AlreadyImported` 不建任何行、不碰已有行。
+#[derive(Debug)]
 enum ImportOutcome {
     Imported(McpServerSummary),
     AlreadyImported(AlreadyImportedMcp),
@@ -597,9 +642,17 @@ pub fn import_scanned_mcp(
     let mut failed = Vec::new();
     let mut already_imported = Vec::new();
 
+    // 纳管即关联到**当前存在同一份配置**的所有客户端：扫一遍四端，按粗身份聚合目标并集。
+    // 只设关联、不立即写盘——写盘留给用户之后的「应用」，与既有接管指纹校验兜底一致。
+    let identity_targets = scan_target_union(&mcp_scan::scan_all(&settings).entries);
+
     for locator in locators {
         let outcome = mcp_scan::load_entry_for_import(locator.target, &locator.key, &settings)
-            .and_then(|input| {
+            .and_then(|mut input| {
+                let identity = mcp_identity::coarse_identity(input.kind, &input.config);
+                if let Some(targets) = identity_targets.get(&identity) {
+                    input.targets = targets.clone();
+                }
                 state.db.with_conn(|conn| {
                     import_entry(conn, &state.crypto, locator.target, &locator.key, input)
                 })
@@ -816,6 +869,8 @@ mod tests {
             env_keys: Vec::new(),
             header_keys: Vec::new(),
             imported_id: None,
+            name_conflict: false,
+            adoptable: false,
         }
     }
 
@@ -862,6 +917,106 @@ mod tests {
         assert_eq!(entries[0].imported_id.as_deref(), Some(alpha.id.as_str()));
         assert_eq!(entries[1].imported_id.as_deref(), Some(ssh.id.as_str()));
         assert_eq!(entries[2].imported_id, None);
+        // R3 预告：名字兜底但身份不同 = 同名冲突（导了撞重名、应用了撞接管）。
+        assert!(!entries[0].name_conflict, "身份命中的不是冲突");
+        assert!(entries[1].name_conflict, "同名不同身份必须标冲突");
+        assert!(!entries[2].name_conflict);
+    }
+
+    #[test]
+    fn scan_marks_adoptable_only_for_enabled_covering_records() {
+        let (bare, _) = same_server_two_shapes();
+        let mut entry = scanned_fixture("sequential-thinking", bare.clone());
+        entry.target = crate::adapters::mcp_scan::ScanTarget::ClaudeCode;
+
+        // 记录启用且覆盖本目标 → 可接管预告。
+        let covering =
+            server_fixture("sequential-thinking", bare.clone(), vec![TargetKind::ClaudeCode], true);
+        let mut entries = vec![entry.clone()];
+        mark_imported_entries(&mut entries, &[covering]);
+        assert!(entries[0].imported_id.is_some());
+        assert!(entries[0].adoptable, "启用且覆盖目标时预告接管");
+
+        // 记录禁用 → 只显示已纳管，不预告接管（禁用行不会被写盘）。
+        let disabled =
+            server_fixture("sequential-thinking", bare.clone(), vec![TargetKind::ClaudeCode], false);
+        let mut entries = vec![entry.clone()];
+        mark_imported_entries(&mut entries, &[disabled]);
+        assert!(entries[0].imported_id.is_some());
+        assert!(!entries[0].adoptable, "禁用记录不触发接管");
+
+        // 记录不覆盖本目标 → 不预告（应用不会碰这个客户端的文件）。
+        let elsewhere =
+            server_fixture("sequential-thinking", bare.clone(), vec![TargetKind::Codex], true);
+        let mut entries = vec![entry.clone()];
+        mark_imported_entries(&mut entries, &[elsewhere]);
+        assert!(!entries[0].adoptable, "不覆盖本目标时不预告接管");
+
+        // 托管条目是自己的写入，无需接管自己。
+        let mut managed = entry.clone();
+        managed.managed = true;
+        managed.key = "xiaobai_sequential-thinking".to_string();
+        let covering =
+            server_fixture("sequential-thinking", bare, vec![TargetKind::ClaudeCode], true);
+        let mut entries = vec![managed];
+        mark_imported_entries(&mut entries, &[covering]);
+        assert!(!entries[0].adoptable, "托管条目不标可接管");
+    }
+
+    #[test]
+    fn scan_new_fields_default_for_old_payloads() {
+        // R5：旧版本发出的扫描载荷没有新字段，反序列化必须成功并取默认值。
+        let entry: crate::adapters::mcp_scan::ScannedMcp = serde_json::from_value(json!({
+            "target": "pi",
+            "key": "legacy",
+            "name": "legacy",
+            "managed": false,
+            "kind": "stdio",
+            "config": {},
+            "envKeys": [],
+            "headerKeys": [],
+        }))
+        .unwrap();
+        assert_eq!(entry.imported_id, None);
+        assert!(!entry.name_conflict);
+        assert!(!entry.adoptable);
+    }
+
+    #[test]
+    fn import_name_collision_fails_without_touching_existing() {
+        // 同名不同身份硬导：粗身份未命中，落到 save 的重名校验 → validation_failed，
+        // 已有行不动、行数不变。界面靠 name_conflict 提前跳过，这里是后端兜底。
+        let conn = db_conn();
+        let crypto = test_crypto();
+        let existing = repo::mcp::save(
+            &conn,
+            &crypto,
+            input_fixture("taken", json!({"command": "uvx", "args": ["a"]}), vec![]),
+        )
+        .unwrap();
+
+        let clash = input_fixture("Taken", json!({"command": "npx", "args": ["-y", "b"]}), vec![]);
+        let error = import_entry(
+            &conn,
+            &crypto,
+            crate::adapters::mcp_scan::ScanTarget::Pi,
+            "taken",
+            clash,
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "validation_failed");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM mcp_servers WHERE id = ?1",
+                params![existing.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "taken");
     }
 
     #[test]
@@ -943,6 +1098,40 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM mcp_servers", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn scan_target_union_groups_same_identity_across_clients() {
+        let bare = json!({"command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]});
+        // 同一份配置出现在 Claude 与 Pi；另一份只在 Codex。
+        let mut on_claude = scanned_fixture("seq", bare.clone());
+        on_claude.target = crate::adapters::mcp_scan::ScanTarget::ClaudeCode;
+        let mut on_pi = scanned_fixture("seq", bare.clone());
+        on_pi.target = crate::adapters::mcp_scan::ScanTarget::Pi;
+        let mut other = scanned_fixture("other", json!({"command": "uvx", "args": ["x"]}));
+        other.target = crate::adapters::mcp_scan::ScanTarget::Codex;
+
+        let map = scan_target_union(&[on_claude, on_pi, other.clone()]);
+
+        let seq_identity = mcp_identity::coarse_identity(McpKind::Stdio, &bare);
+        assert_eq!(
+            map.get(&seq_identity),
+            Some(&vec![TargetKind::ClaudeCode, TargetKind::Pi]),
+            "同款配置的两端并集，按四端固定序去重"
+        );
+        let other_identity = mcp_identity::coarse_identity(McpKind::Stdio, &other.config);
+        assert_eq!(map.get(&other_identity), Some(&vec![TargetKind::Codex]));
+    }
+
+    #[test]
+    fn scan_target_union_dedupes_duplicate_target() {
+        // 极端形状：同一目标里被扫出两条同款（理论上不该发生，但并集不得出现重复目标）。
+        let config = json!({"command": "npx", "args": ["a"]});
+        let a = scanned_fixture("dup-a", config.clone());
+        let b = scanned_fixture("dup-b", config.clone());
+        let map = scan_target_union(&[a, b]);
+        let identity = mcp_identity::coarse_identity(McpKind::Stdio, &config);
+        assert_eq!(map.get(&identity), Some(&vec![TargetKind::ClaudeCode]));
     }
 
     #[test]

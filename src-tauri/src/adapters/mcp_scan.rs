@@ -56,6 +56,15 @@ pub struct ScannedMcp {
     /// 该条目在库里的同一条目 id；非空表示已纳管过。
     #[serde(default)]
     pub imported_id: Option<String>,
+    /// 同名冲突：库里有同归一化名的记录，但粗身份不同（用户纳管后又改过一侧）。
+    /// 界面据此显示「冲突·将跳过」，不提供纳管（硬导会撞上重名校验，应用会撞上接管校验）。
+    #[serde(default)]
+    pub name_conflict: bool,
+    /// 等价可接管：按粗身份命中库内记录（且是这条未托管条目本身），该记录启用并覆盖
+    /// 本目标——下次应用时会删掉这条未托管条目、写入 `xiaobai_` 托管条目。
+    /// 只是展示预告，真正的删写仍由应用时的 `can_take_over` 严格判定。
+    #[serde(default)]
+    pub adoptable: bool,
 }
 
 /// 扫描过程中的一条告警：某个客户端的配置读不了（文件不合法等）。
@@ -217,6 +226,9 @@ fn parse_json_servers(text: &str, target: ScanTarget, label: &str) -> AppResult<
             env_keys,
             header_keys,
             imported_id: None,
+            // 冲突/接管预告由 scan_existing_mcp 在拿到库内记录后统一标注，这里只给初值。
+            name_conflict: false,
+            adoptable: false,
         });
     }
     out.sort_by(|a, b| a.key.cmp(&b.key));
@@ -292,6 +304,8 @@ fn parse_codex_servers(text: &str) -> AppResult<Vec<ScannedMcp>> {
                 names
             },
             imported_id: None,
+            name_conflict: false,
+            adoptable: false,
         });
     }
     out.sort_by(|a, b| a.key.cmp(&b.key));

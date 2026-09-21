@@ -12,18 +12,14 @@ import {
   List,
   Modal,
   Segmented,
-  Select,
   Space,
   Switch,
-  Tabs,
   Tag,
   Tooltip,
   Typography,
   theme,
 } from "antd";
 import {
-  CloudDownloadOutlined,
-  ImportOutlined,
   InfoCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
@@ -35,7 +31,6 @@ import { invoke } from "@/lib/invoke";
 import { useMcpStore } from "@/stores";
 import { useMcpUpdateStore } from "@/stores/mcpUpdateStore";
 import type {
-  McpApplyResult,
   McpImportLocator,
   McpKind,
   McpServerInput,
@@ -47,8 +42,9 @@ import type {
   ScannedMcp,
 } from "@/types/mcp";
 import type { TargetKind } from "@/types/domain";
-import { ApplyPanel } from "./mcp/ApplyPanel";
-import { SavedMcpList } from "./mcp/SavedMcpList";
+import { McpCard, type ClientState } from "./mcp/McpCard";
+import { UnmanagedMcpCard } from "./mcp/UnmanagedMcpCard";
+import { ConflictModal, type ConflictContext } from "./mcp/ConflictModal";
 import {
   MCP_TARGETS as TARGETS,
   MCP_TARGET_LABEL_KEYS as TARGET_LABEL_KEYS,
@@ -62,6 +58,9 @@ const KIND_OPTIONS: { label: string; value: McpKind }[] = [
 
 /** 高级层保留的「其余配置字段」：command/args/url 由简单层负责，这里只放额外键。 */
 const SIMPLE_CONFIG_KEYS = ["command", "args", "url"] as const;
+
+/** 添加来源：手动填写 / 从仓库安装。 */
+type AddSource = "manual" | "registry";
 
 interface FormValues {
   name: string;
@@ -133,19 +132,6 @@ function describeDraft(draft: RegistryInstallDraft, t: (key: string) => string) 
   return typeof url === "string" ? `${t("mcp.registryWillConnect")} ${url}` : "";
 }
 
-/** 扫描条目的启动方式摘要：本地是命令行，远程是地址。 */
-function describeScanned(entry: ScannedMcp): string {
-  const command = entry.config.command;
-  if (typeof command === "string") {
-    const args = Array.isArray(entry.config.args)
-      ? entry.config.args.filter((item): item is string => typeof item === "string")
-      : [];
-    return [command, ...args].join(" ");
-  }
-  const url = entry.config.url;
-  return typeof url === "string" ? url : "—";
-}
-
 function hostOf(url: string): string | null {
   try {
     return new URL(url).host;
@@ -162,8 +148,7 @@ interface RegistrySearchBarProps {
 
 /**
  * 仓库搜索框：输入值留在组件内部，击键只重渲染这个输入框，
- * 不会带着整页（仓库结果列表 + 已保存 MCP 表格）一起重渲染。
- * 父组件只通过 onQueryChange 记一份 ref（供「只看本地」切换时重查用）。
+ * 不会带着整页一起重渲染。父组件只通过 onQueryChange 记一份 ref。
  */
 function RegistrySearchBar({ searching, onSubmit, onQueryChange }: RegistrySearchBarProps) {
   const { t } = useTranslation();
@@ -194,14 +179,13 @@ export function McpPage() {
   const { t } = useTranslation();
   const { token } = theme.useToken();
   const { message, modal } = App.useApp();
-  // 按字段订阅：任一 store 更新不再整页重渲染（表格与仓库列表都很贵）。
+  // 按字段订阅：任一 store 更新不再整页重渲染。
   const servers = useMcpStore((s) => s.servers);
   const loading = useMcpStore((s) => s.loading);
   const loadServers = useMcpStore((s) => s.loadServers);
   const getServer = useMcpStore((s) => s.getServer);
   const saveServer = useMcpStore((s) => s.saveServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
-  const applyServers = useMcpStore((s) => s.applyServers);
   const searchRegistry = useMcpStore((s) => s.searchRegistry);
   const discoverRegistry = useMcpStore((s) => s.discoverRegistry);
   const scanExisting = useMcpStore((s) => s.scanExisting);
@@ -217,20 +201,15 @@ export function McpPage() {
   const updateAll = useMcpUpdateStore((s) => s.updateAll);
 
   const [open, setOpen] = useState(false);
+  const [addSource, setAddSource] = useState<AddSource>("manual");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
   const [targetPaths, setTargetPaths] = useState<[TargetKind, string][]>([]);
-  // R1 页签与我的 MCP 过滤（纯 UI 状态，不进 store）。
-  const [activeTab, setActiveTab] = useState("mine");
   const [mineSearch, setMineSearch] = useState("");
-  const [mineTarget, setMineTarget] = useState<"all" | TargetKind>("all");
-  const [onlyUpdates, setOnlyUpdates] = useState(false);
-  // 最近一次应用结果：应用面板内逐目标展示（modal 结果保留不变）。
-  const [lastApplyResult, setLastApplyResult] = useState<McpApplyResult | null>(null);
   // 「其它客户端已有的 MCP」扫描结果。null = 还没扫描过。
   const [scanOutcome, setScanOutcome] = useState<ScanOutcome | null>(null);
-  const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
+  // 某条 MCP 的某个客户端开关正在写盘（防连点，逐卡独立 spinner）。
+  const [busyToggle, setBusyToggle] = useState<{ id: string; target: TargetKind } | null>(null);
   const [form] = Form.useForm<FormValues>();
   const kind = Form.useWatch("kind", form);
 
@@ -238,8 +217,15 @@ export function McpPage() {
   const [draft, setDraft] = useState<RegistryInstallDraft | null>(null);
   const [requiredValues, setRequiredValues] = useState<Record<string, string>>({});
   const [requiredErrors, setRequiredErrors] = useState<Record<string, boolean>>({});
+  // 免密钥条目在没有任何已有目标时，弹窗问一次装到哪儿（不先入库不应用）。
+  const [targetPicker, setTargetPicker] = useState<RegistryCandidate | null>(null);
+  const [pickerTargets, setPickerTargets] = useState<TargetKind[]>([...TARGETS]);
 
-  // 仓库搜索状态：查询词只记在 ref 里（输入框自身持有 state），切换「只看本地」时用它重查。
+  // 同名冲突解决弹窗
+  const [conflict, setConflict] = useState<ConflictContext | null>(null);
+  const [conflictLoc, setConflictLoc] = useState<{ target: ScannedMcp["target"]; key: string } | null>(null);
+
+  // 仓库搜索状态：查询词只记在 ref 里（输入框自身持有 state）。
   const queryRef = useRef("");
   const [localOnly, setLocalOnly] = useState(true);
   const [searching, setSearching] = useState(false);
@@ -247,36 +233,101 @@ export function McpPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [searched, setSearched] = useState(false);
 
-  useEffect(() => {
-    void loadServers();
-    void invoke<[TargetKind, string][]>("mcp_target_paths")
-      .then(setTargetPaths)
-      .catch(() => setTargetPaths([]));
-    // 首次打开就直接给出内容：空查询表示「浏览最近更新的 MCP」，避免进来是一片空白。
-    void browseRecent(true);
-    // 顺带扫一次本地已有配置：读本地文件，开销很小，用户一进来就能看到能纳管什么。
-    void runScan();
-    // 检查更新
-    void checkUpdates().catch((error) => {
-      console.error('Failed to check updates on mount:', error);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadServers]);
-
   const targetLabel = useCallback(
     (target: TargetKind) => t(TARGET_LABEL_KEYS[target] ?? target),
     [t],
   );
 
+  const showApplyOutcome = useCallback((result: {
+    results: { target: TargetKind; ok: boolean; message: string }[];
+  }) => {
+    if (result.results.length === 0) return;
+    modal.info({
+      centered: true,
+      title: t("mcp.applyResultTitle"),
+      width: 520,
+      content: (
+        <div className="flex flex-col gap-2">
+          {result.results.map((item) => (
+            <div key={item.target}>
+              {item.ok ? (
+                <span>
+                  {t("mcp.targetSuccess", { target: targetLabel(item.target) })}
+                  {item.message ? ` — ${item.message}` : ""}
+                </span>
+              ) : (
+                <span style={{ color: token.colorError }}>
+                  {t("mcp.targetFailed", {
+                    target: targetLabel(item.target),
+                    message: item.message,
+                  })}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      ),
+      okText: t("common.confirm"),
+    });
+  }, [modal, t, targetLabel, token.colorError]);
+
+  // ---------------------------------------------------------------------
+  // 仓库搜索
+  // ---------------------------------------------------------------------
+
+  /** 一次补齐的目标条数：仓库远程条目多，只看本地时单页往往只剩两三条。 */
+  const FILL_TARGET = 20;
+
+  /** 首次进入/切换「只看本地」时，用常见类目词拉「常用推荐」而不是空列表。 */
+  const browseRecent = useCallback(async (onlyLocal: boolean) => {
+    setSearching(true);
+    try {
+      const result = await discoverRegistry({ localOnly: onlyLocal, minResults: FILL_TARGET });
+      setCandidates(result.candidates);
+      setNextCursor(result.nextCursor ?? null);
+      setSearched(true);
+    } catch (error) {
+      void message.error(errorText(error));
+    } finally {
+      setSearching(false);
+    }
+  }, [discoverRegistry, message]);
+
+  const runScan = useCallback(async () => {
+    try {
+      setScanOutcome(await scanExisting());
+    } catch (error) {
+      void message.error(errorText(error));
+    }
+  }, [scanExisting, message]);
+
+  useEffect(() => {
+    void loadServers();
+    void invoke<[TargetKind, string][]>("mcp_target_paths")
+      .then(setTargetPaths)
+      .catch(() => setTargetPaths([]));
+    // 一进来就扫一次本地已有配置：读本地文件，开销很小，直接看到能纳管什么。
+    void runScan();
+    void checkUpdates().catch((error) => {
+      console.error("Failed to check updates on mount:", error);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadServers]);
+
   // ---------------------------------------------------------------------
   // 表单
   // ---------------------------------------------------------------------
 
-  const openCreate = () => {
-    setEditingId(null);
+  const resetForm = () => {
     setDraft(null);
     setRequiredValues({});
     setRequiredErrors({});
+  };
+
+  const openCreate = () => {
+    setEditingId(null);
+    setAddSource("manual");
+    resetForm();
     form.setFieldsValue({
       name: "",
       kind: "stdio",
@@ -289,6 +340,8 @@ export function McpPage() {
       env: "{}",
       headers: "{}",
     });
+    // 打开时顺带拉一次仓库「常用推荐」，切到仓库页签就有内容。
+    if (!searched) void browseRecent(localOnly);
     setOpen(true);
   };
 
@@ -296,9 +349,8 @@ export function McpPage() {
     try {
       const server = await getServer(id);
       setEditingId(server.id);
-      setDraft(null);
-      setRequiredValues({});
-      setRequiredErrors({});
+      setAddSource("manual");
+      resetForm();
       form.setFieldsValue({
         name: server.name,
         kind: server.kind,
@@ -322,6 +374,7 @@ export function McpPage() {
     setDraft(install);
     setRequiredValues({});
     setRequiredErrors({});
+    setAddSource("manual");
     form.setFieldsValue({
       name: install.name,
       kind: install.kind,
@@ -331,14 +384,11 @@ export function McpPage() {
       env: JSON.stringify(install.env ?? {}, null, 2),
       headers: JSON.stringify(install.headers ?? {}, null, 2),
     });
-    setOpen(true);
   };
 
   /**
-   * 仓库条目的目标推断：不新增 MCP 时，把已有 MCP 已经配置的目标作为默认值。
-   *
-   * 这样一键安装不会只保存不应用——用户是在已经用起来的客户端上加装，不需要每次重新勾。
-   * 没有任何已配置目标时返回空数组，由调用方决定是直接装还是先问一句。
+   * 仓库条目的目标推断：把已有 MCP 已经配置的目标作为默认值。
+   * 一键安装不会只保存不应用；没有任何已配置目标时返回空数组。
    */
   const preferredTargets = (): TargetKind[] => {
     const targets = new Set<TargetKind>();
@@ -346,10 +396,7 @@ export function McpPage() {
     return TARGETS.filter((target) => targets.has(target));
   };
 
-  /**
-   * 把表单值 + 仓库必填项组装成待保存的输入。
-   * 供弹窗保存与一键安装共用，避免两条路径的校验/拼装逻辑分叉。
-   */
+  /** 把表单值 + 仓库必填项组装成待保存的输入。 */
   const buildServerInput = (
     values: FormValues,
     options: { id?: string; targets: TargetKind[] },
@@ -398,6 +445,7 @@ export function McpPage() {
         void message.warning(t("mcp.applyPartial"));
       }
       showApplyOutcome(sweep);
+      void runScan();
       return true;
     } catch (error) {
       void message.error(errorText(error));
@@ -405,24 +453,10 @@ export function McpPage() {
     }
   };
 
-  /**
-   * 一键安装：仓库条目已带全部启动信息、且不需要用户填任何东西时直接装好。
-   * 需要填密钥、或还没配置过任何目标（不知道该装到哪儿）时，才打开表单。
-   */
-  const installFromRegistry = async (candidate: RegistryCandidate) => {
+  /** 直接安装：仓库条目信息齐全、目标明确时不弹表单，一步装好。 */
+  const installDirect = async (candidate: RegistryCandidate, targets: TargetKind[]) => {
     const install = candidate.draft;
     if (!install) return;
-
-    const targets = preferredTargets();
-    const needsInput =
-      (install.requiredFields?.length ?? 0) > 0 || targets.length === 0;
-
-    if (needsInput) {
-      openFromRegistry(candidate, targets);
-      return;
-    }
-
-    // 名称冲突交给后端报错，这里不预判——用户可以直接改名重试。
     const values: FormValues = {
       name: install.name,
       kind: install.kind,
@@ -435,11 +469,35 @@ export function McpPage() {
     setRequiredValues({});
     try {
       const input = buildServerInput(values, { targets, id: undefined });
-      await persist(input);
+      if (await persist(input)) setOpen(false);
     } catch (error) {
-      // draft 为空时 buildServerInput 不会用到仓库必填项；解析失败只可能是预填值异常。
       void message.error(errorText(error));
     }
+  };
+
+  /**
+   * 一键安装分流：
+   * - 需要填密钥 → 切到手动表单（必填项逐项填）；
+   * - 免密钥但没有任何已有目标 → 小弹窗问一次装到哪儿；
+   * - 否则直接装好并沿用已有目标。
+   */
+  const installFromRegistry = async (candidate: RegistryCandidate) => {
+    const install = candidate.draft;
+    if (!install) return;
+
+    if ((install.requiredFields?.length ?? 0) > 0) {
+      openFromRegistry(candidate, preferredTargets());
+      return;
+    }
+
+    const targets = preferredTargets();
+    if (targets.length === 0) {
+      setPickerTargets([...TARGETS]);
+      setTargetPicker(candidate);
+      return;
+    }
+
+    await installDirect(candidate, targets);
   };
 
   const handleSave = async () => {
@@ -450,7 +508,6 @@ export function McpPage() {
       return;
     }
 
-    // 必填项由仓库声明，缺任何一个都不该让用户以为装好了。
     if (draft) {
       const missing: Record<string, boolean> = {};
       for (const field of draft.requiredFields) {
@@ -474,39 +531,6 @@ export function McpPage() {
     if (await persist(input)) setOpen(false);
   };
 
-  const showApplyOutcome = useCallback((result: {
-    results: { target: TargetKind; ok: boolean; message: string }[];
-  }) => {
-    if (result.results.length === 0) return;
-    modal.info({
-      centered: true,
-      title: t("mcp.applyResultTitle"),
-      width: 520,
-      content: (
-        <div className="flex flex-col gap-2">
-          {result.results.map((item) => (
-            <div key={item.target}>
-              {item.ok ? (
-                <span>
-                  {t("mcp.targetSuccess", { target: targetLabel(item.target) })}
-                  {item.message ? ` — ${item.message}` : ""}
-                </span>
-              ) : (
-                <span style={{ color: token.colorError }}>
-                  {t("mcp.targetFailed", {
-                    target: targetLabel(item.target),
-                    message: item.message,
-                  })}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      ),
-      okText: t("common.confirm"),
-    });
-  }, [modal, t, targetLabel, token.colorError]);
-
   const handleDelete = useCallback(
     (record: McpServerSummary) => {
       modal.confirm({
@@ -526,47 +550,21 @@ export function McpPage() {
             const result = await deleteServer(record.id);
             void message.success(t("common.success"));
             showApplyOutcome(result);
+            void runScan();
           } catch (error) {
             void message.error(errorText(error));
           }
         },
       });
     },
-    [modal, t, token.colorTextTertiary, deleteServer, message, showApplyOutcome],
+    [modal, t, token.colorTextTertiary, deleteServer, message, showApplyOutcome, runScan],
   );
-
-  // ---------------------------------------------------------------------
-  // 仓库搜索
-  // ---------------------------------------------------------------------
-
-  /** 一次补齐的目标条数：仓库远程条目多，只看本地时单页往往只剩两三条。 */
-  const FILL_TARGET = 20;
-
-  /** 首次进入/切换「只看本地」时，用常见类目词拉「热门」而不是空列表。 */
-  const browseRecent = async (onlyLocal: boolean) => {
-    setSearching(true);
-    try {
-      const result = await discoverRegistry({ localOnly: onlyLocal, minResults: FILL_TARGET });
-      setCandidates(result.candidates);
-      setNextCursor(result.nextCursor ?? null);
-      setSearched(true);
-    } catch (error) {
-      // 首次加载失败不该打断其它功能（手动添加仍可用），只提示一次。
-      void message.error(errorText(error));
-    } finally {
-      setSearching(false);
-    }
-  };
 
   const runSearch = async (cursor?: string | null) => {
     const term = queryRef.current.trim();
     setSearching(true);
     try {
-      const result = await searchRegistry(term, {
-        cursor,
-        localOnly,
-        minResults: FILL_TARGET,
-      });
+      const result = await searchRegistry(term, { cursor, localOnly, minResults: FILL_TARGET });
       setCandidates((current) =>
         cursor ? [...current, ...result.candidates] : result.candidates,
       );
@@ -581,7 +579,6 @@ export function McpPage() {
 
   const toggleLocalOnly = (checked: boolean) => {
     setLocalOnly(checked);
-    // 过滤在后端做，切换后必须重查，否则列表和开关会对不上。
     setCandidates([]);
     setNextCursor(null);
     if (queryRef.current.trim()) void runSearchAgain(checked);
@@ -608,65 +605,101 @@ export function McpPage() {
   // 扫描并纳管其它客户端已有的 MCP
   // ---------------------------------------------------------------------
 
-  /** 可纳管的条目：排除本工具托管的、以及已纳管过的。 */
+  /** 可纳管的「野生」条目：排除托管的、已纳管过的、同名冲突的。 */
   const importable = useMemo(
-    () => (scanOutcome?.entries ?? []).filter((entry) => !entry.managed && !entry.importedId),
+    () =>
+      (scanOutcome?.entries ?? []).filter(
+        (entry) => !entry.managed && !entry.importedId && !entry.nameConflict,
+      ),
     [scanOutcome],
   );
 
-  const runScan = async () => {
-    setScanning(true);
-    try {
-      setScanOutcome(await scanExisting());
-    } catch (error) {
-      void message.error(errorText(error));
-    } finally {
-      setScanning(false);
+  /** (归一化名, 目标) → 同名冲突：卡片据此把该客户端开关标为冲突态。 */
+  const conflictSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const entry of scanOutcome?.entries ?? []) {
+      if (entry.nameConflict) set.add(`${entry.name}::${entry.target}`);
     }
-  };
+    return set;
+  }, [scanOutcome]);
 
-  const importEntries = async (locators: McpImportLocator[]) => {
-    if (locators.length === 0) return;
-    setImporting(true);
-    try {
-      const result = await importScanned(locators);
-      if (result.failed.length === 0) {
-        void message.success(
-          t("mcp.existingImportSuccess", { count: result.imported.length }),
-        );
-      } else if (result.imported.length > 0) {
-        void message.warning(
-          t("mcp.existingImportPartial", {
-            ok: result.imported.length,
-            failed: result.failed.length,
-          }),
-        );
-      } else {
-        // 全失败时把第一条原因带出来，否则用户不知道卡在哪。
-        void message.error(
-          `${t("mcp.existingImportFailed")}: ${result.failed[0]?.message ?? ""}`,
-        );
+  const clientStatesOf = useCallback(
+    (server: McpServerSummary): Record<TargetKind, ClientState> => {
+      const states = {} as Record<TargetKind, ClientState>;
+      for (const target of TARGETS) {
+        if (conflictSet.has(`${server.name}::${target}`)) states[target] = "conflict";
+        else if (server.enabled && server.targets.includes(target)) states[target] = "on";
+        else states[target] = "off";
       }
-      // 重新扫描，让「已纳管」标记立刻刷新。
-      setScanOutcome(await scanExisting());
-    } catch (error) {
-      void message.error(errorText(error));
-    } finally {
-      setImporting(false);
-    }
+      return states;
+    },
+    [conflictSet],
+  );
+
+  const importEntries = useCallback(
+    async (locators: McpImportLocator[]) => {
+      if (locators.length === 0) return;
+      setImporting(true);
+      try {
+        const result = await importScanned(locators);
+        const alreadyCount = result.alreadyImported?.length ?? 0;
+        if (result.failed.length === 0) {
+          void message.success(t("mcp.existingImportSuccess", { count: result.imported.length }));
+          if (alreadyCount > 0) {
+            void message.info(t("mcp.existingAlreadyImported", { count: alreadyCount }));
+          }
+        } else if (result.imported.length > 0) {
+          void message.warning(
+            t("mcp.existingImportPartial", {
+              ok: result.imported.length,
+              failed: result.failed.length,
+            }),
+          );
+        } else {
+          void message.error(
+            `${t("mcp.existingImportFailed")}: ${result.failed[0]?.message ?? ""}`,
+          );
+        }
+        setScanOutcome(await scanExisting());
+      } catch (error) {
+        void message.error(errorText(error));
+      } finally {
+        setImporting(false);
+      }
+    },
+    [importScanned, scanExisting, message, t],
+  );
+
+  const confirmImportAll = () => {
+    modal.confirm({
+      centered: true,
+      title: t("mcp.existingImportConfirmTitle", { count: importable.length }),
+      content: (
+        <div className="flex flex-col gap-1">
+          {importable.map((entry) => (
+            <div key={`${entry.target}:${entry.key}`} style={{ fontSize: 13 }}>
+              {entry.name}
+              <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
+                {targetLabel(entry.target as TargetKind)}
+              </Typography.Text>
+            </div>
+          ))}
+          <Typography.Text type="secondary" style={{ fontSize: 12, marginTop: 4 }}>
+            {t("mcp.existingImportConfirmNote")}
+          </Typography.Text>
+        </div>
+      ),
+      okText: t("common.confirm"),
+      cancelText: t("common.cancel"),
+      onOk: () => {
+        void importEntries(importable.map((entry) => ({ target: entry.target, key: entry.key })));
+      },
+    });
   };
 
   // ---------------------------------------------------------------------
-  // 应用目标
+  // 更新
   // ---------------------------------------------------------------------
-
-  const activeTargets = useMemo(() => {
-    const set = new Set<TargetKind>();
-    servers
-      .filter((server) => server.enabled)
-      .forEach((server) => server.targets.forEach((target) => set.add(target)));
-    return TARGETS.filter((target) => set.has(target));
-  }, [servers]);
 
   const handleUpdate = useCallback(
     async (id: string) => {
@@ -685,7 +718,7 @@ export function McpPage() {
     modal.confirm({
       centered: true,
       title: t("mcp.updateAllTitle"),
-      content: t("mcp.updateAllConfirm", { count: updateCount }),
+      content: t("mcp.updateAllConfirm", { count: updateCount() }),
       onOk: async () => {
         try {
           const { successes, failures } = await updateAll();
@@ -693,10 +726,7 @@ export function McpPage() {
             void message.success(t("mcp.updateAllSuccess", { count: successes.length }));
           } else if (successes.length > 0) {
             void message.warning(
-              t("mcp.updateAllPartial", {
-                success: successes.length,
-                failed: failures.length,
-              }),
+              t("mcp.updateAllPartial", { success: successes.length, failed: failures.length }),
             );
           } else {
             void message.error(t("mcp.updateAllFailed"));
@@ -711,7 +741,6 @@ export function McpPage() {
 
   const handleCheckUpdates = async () => {
     try {
-      // 手动刷新绕过 store 的新鲜度窗口：窗口内直接复用缓存会让按钮看起来「点了没反应」。
       await checkUpdates({ force: true });
       void message.success(t("mcp.checkUpdatesSuccess"));
     } catch (error) {
@@ -719,45 +748,11 @@ export function McpPage() {
     }
   };
 
-  /** 应用面板入口：空选中时按钮已禁用，这里只管写盘、记结果、展示。 */
-  const handleApplySelected = async (targets: TargetKind[]) => {
-    setApplying(true);
-    try {
-      const result = await applyServers(targets);
-      setLastApplyResult(result);
-      const failed = result.results.filter((item) => !item.ok);
-      if (failed.length === 0) {
-        void message.success(t("mcp.applySuccess"));
-      } else if (failed.length < result.results.length) {
-        void message.warning(t("mcp.applyPartial"));
-      } else {
-        void message.error(t("mcp.applyFailed"));
-      }
-      showApplyOutcome(result);
-    } catch (error) {
-      void message.error(errorText(error));
-    } finally {
-      setApplying(false);
-    }
-  };
+  // ---------------------------------------------------------------------
+  // 卡片交互：总开关 / 逐客户端开关 / 冲突解决
+  // ---------------------------------------------------------------------
 
-  // 我的 MCP 过滤：名称子串（大小写不敏感）+ 目标 + 只看可更新。
-  const visibleServers = useMemo(() => {
-    const query = mineSearch.trim().toLowerCase();
-    return servers.filter((server) => {
-      if (query && !server.name.toLowerCase().includes(query)) return false;
-      if (mineTarget !== "all" && !server.targets.includes(mineTarget)) return false;
-      if (
-        onlyUpdates &&
-        !updateStatuses.some((item) => item.id === server.id && item.hasUpdate)
-      ) {
-        return false;
-      }
-      return true;
-    });
-  }, [servers, mineSearch, mineTarget, onlyUpdates, updateStatuses]);
-
-  /** 卡片上的启用开关：直接落库；禁用即从各目标写盘清单摘除（清理走后端 sweep）。 */
+  /** 卡片上的总开关：直接落库；禁用即从各目标写盘清单摘除（清理走后端 sweep）。 */
   const handleToggleEnabled = useCallback(
     async (record: McpServerSummary, enabled: boolean) => {
       try {
@@ -781,6 +776,102 @@ export function McpPage() {
     [getServer, saveServer, message, showApplyOutcome, t],
   );
 
+  /** 逐客户端开关：改 targets → save，后端 sweep 负责写盘/清理。 */
+  const handleToggleClient = useCallback(
+    async (record: McpServerSummary, target: TargetKind, next: boolean) => {
+      setBusyToggle({ id: record.id, target });
+      try {
+        const server = await getServer(record.id);
+        const targets = next
+          ? Array.from(new Set([...server.targets, target]))
+          : server.targets.filter((item) => item !== target);
+        const { sweep } = await saveServer({
+          id: server.id,
+          name: server.name,
+          kind: server.kind,
+          enabled: server.enabled,
+          targets,
+          config: server.config,
+          env: server.env,
+          headers: server.headers,
+        });
+        const failed = sweep.results.filter((item) => !item.ok);
+        if (failed.length > 0) showApplyOutcome(sweep);
+        // 应用后接管关系变了，重扫让 adoptable/冲突态刷新。
+        void runScan();
+      } catch (error) {
+        void message.error(errorText(error));
+      } finally {
+        setBusyToggle(null);
+      }
+    },
+    [getServer, saveServer, message, showApplyOutcome, runScan],
+  );
+
+  /** 打开同名冲突对比：左库内、右客户端；只取 config + 键名，密钥值不出后端。 */
+  const openConflict = useCallback(
+    async (record: McpServerSummary, target: TargetKind) => {
+      const entry = (scanOutcome?.entries ?? []).find(
+        (item) => item.name === record.name && item.target === target && item.nameConflict,
+      );
+      if (!entry) return;
+      try {
+        const mine = await getServer(record.id);
+        const mineText = JSON.stringify(
+          {
+            config: mine.config,
+            envKeys: Object.keys(mine.env ?? {}),
+            headerKeys: Object.keys(mine.headers ?? {}),
+          },
+          null,
+          2,
+        );
+        const theirsText = JSON.stringify(
+          { config: entry.config, envKeys: entry.envKeys, headerKeys: entry.headerKeys },
+          null,
+          2,
+        );
+        setConflictLoc({ target: entry.target, key: entry.key });
+        setConflict({
+          serverName: record.name,
+          targetLabel: targetLabel(target),
+          mineText,
+          theirsText,
+        });
+      } catch (error) {
+        void message.error(errorText(error));
+      }
+    },
+    [scanOutcome, getServer, targetLabel, message],
+  );
+
+  /** 用客户端的定义反向入库（后端撞重名会如实报错，用户可改名后重试）。 */
+  const adoptTheirs = () => {
+    const loc = conflictLoc;
+    setConflict(null);
+    setConflictLoc(null);
+    if (loc) void importEntries([{ target: loc.target, key: loc.key }]);
+  };
+
+  const skipConflict = () => {
+    setConflict(null);
+    setConflictLoc(null);
+  };
+
+  // 我的 MCP 过滤：名称子串（大小写不敏感）。
+  const visibleServers = useMemo(() => {
+    const query = mineSearch.trim().toLowerCase();
+    if (!query) return servers;
+    return servers.filter((server) => server.name.toLowerCase().includes(query));
+  }, [servers, mineSearch]);
+
+  const editing = editingId !== null;
+  const modalTitle = editing
+    ? t("mcp.edit")
+    : draft
+      ? t("mcp.registryInstall")
+      : t("mcp.add");
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
       <div>
@@ -795,260 +886,69 @@ export function McpPage() {
         <Typography.Text type="secondary">{t("mcp.emptyDesc")}</Typography.Text>
       </div>
 
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        destroyOnHidden
-        items={[
-          {
-            key: "mine",
-            label: t("mcp.tabMine", { count: servers.length }),
-            children: (
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    value={mineSearch}
-                    onChange={(event) => setMineSearch(event.target.value)}
-                    placeholder={t("mcp.mineSearchPlaceholder")}
-                    allowClear
-                    style={{ width: 220 }}
-                  />
-                  <Select
-                    value={mineTarget}
-                    style={{ width: 140 }}
-                    onChange={(value) => setMineTarget(value as "all" | TargetKind)}
-                    options={[
-                      { value: "all", label: t("mcp.allTargets") },
-                      ...TARGETS.map((target) => ({
-                        value: target,
-                        label: targetLabel(target),
-                      })),
-                    ]}
-                  />
-                  <Checkbox
-                    checked={onlyUpdates}
-                    onChange={(event) => setOnlyUpdates(event.target.checked)}
-                  >
-                    {t("mcp.onlyUpdates")}
-                  </Checkbox>
-                  <span style={{ flex: 1 }} />
-                  <Tooltip title={t("mcp.checkUpdates")}>
-                    <Button
-                      icon={<ReloadOutlined spin={checking} />}
-                      loading={checking}
-                      onClick={() => void handleCheckUpdates()}
-                    >
-                      {t("mcp.checkUpdates")}
-                    </Button>
-                  </Tooltip>
-                  {hasAnyUpdate() && (
-                    <Button
-                      type="default"
-                      icon={<SyncOutlined />}
-                      onClick={() => void handleUpdateAll()}
-                    >
-                      {t("mcp.updateAll")} ({updateCount()})
-                    </Button>
-                  )}
-                  <Tooltip title={t("mcp.manualAddHint")}>
-                    <Button icon={<PlusOutlined />} onClick={openCreate}>
-                      {t("mcp.manualAdd")}
-                    </Button>
-                  </Tooltip>
-                </div>
+      {/* 精简工具条：搜索 + 检查更新 + 一键更新 + 添加 MCP */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={mineSearch}
+          onChange={(event) => setMineSearch(event.target.value)}
+          placeholder={t("mcp.mineSearchPlaceholder")}
+          allowClear
+          prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
+          style={{ width: 240 }}
+        />
+        <span style={{ flex: 1 }} />
+        <Tooltip title={t("mcp.checkUpdates")}>
+          <Button
+            icon={<ReloadOutlined spin={checking} />}
+            loading={checking}
+            onClick={() => void handleCheckUpdates()}
+          >
+            {t("mcp.checkUpdates")}
+          </Button>
+        </Tooltip>
+        {hasAnyUpdate() && (
+          <Button icon={<SyncOutlined />} onClick={() => void handleUpdateAll()}>
+            {t("mcp.updateAll")} ({updateCount()})
+          </Button>
+        )}
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+          {t("mcp.add")}
+        </Button>
+      </div>
 
-                <SavedMcpList
-                  servers={visibleServers}
-                  hasAnyServer={servers.length > 0}
-                  loading={loading}
-                  updateStatuses={updateStatuses}
-                  updating={updating}
-                  targetLabel={targetLabel}
-                  onEdit={(id) => void openEdit(id)}
-                  onDelete={handleDelete}
-                  onUpdate={(id) => void handleUpdate(id)}
-                  onToggleEnabled={(record, enabled) => void handleToggleEnabled(record, enabled)}
-                />
-
-                <ApplyPanel
-                  enabledCount={servers.filter((server) => server.enabled).length}
-                  activeTargets={activeTargets}
-                  targetPaths={targetPaths}
-                  targetLabel={targetLabel}
-                  applying={applying}
-                  lastResult={lastApplyResult}
-                  onApply={(targets) => void handleApplySelected(targets)}
-                />
-              </div>
-            ),
-          },
-          {
-            key: "registry",
-            label: t("mcp.tabRegistry"),
-            children: (
-      <Card
-        size="small"
-        title={
-          <Space>
-            <CloudDownloadOutlined />
-            <span>{t("mcp.registryTitle")}</span>
-          </Space>
-        }
-      >
-        <div className="flex flex-col gap-3">
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t("mcp.registryDesc")}
-          </Typography.Text>
-          <RegistrySearchBar
-            searching={searching}
-            onQueryChange={(value) => {
-              queryRef.current = value;
-            }}
-            onSubmit={(value) => {
-              queryRef.current = value;
-              setCandidates([]);
-              setNextCursor(null);
-              void runSearch(null);
-            }}
-          />
-
-          <Space size={8} wrap>
-            <Switch checked={localOnly} size="small" onChange={toggleLocalOnly} />
-            <Typography.Text style={{ fontSize: 12 }}>{t("mcp.registryLocalOnly")}</Typography.Text>
-            <Tooltip title={t("mcp.registryLocalOnlyHint")}>
-              <InfoCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />
-            </Tooltip>
-          </Space>
-
-          {candidates.length > 0 && (
-            <List
-              size="small"
-              dataSource={candidates}
-              renderItem={(candidate) => {
-                const install = candidate.draft;
-                const local =
-                  install?.kind === "stdio" && typeof install.config.command === "string";
-                const url = typeof install?.config.url === "string" ? install.config.url : "";
-                const host = url ? hostOf(url) : null;
-                const requiredCount = install?.requiredFields.length ?? 0;
-                return (
-                  <List.Item
-                    actions={[
-                      <Button
-                        key="install"
-                        type="primary"
-                        size="small"
-                        disabled={!install}
-                        onClick={() => void installFromRegistry(candidate)}
-                      >
-                        {t("mcp.registryInstall")}
-                      </Button>,
-                    ]}
-                  >
-                    <List.Item.Meta
-                      title={
-                        <Space size={6} wrap>
-                          <Typography.Text strong>{candidate.name}</Typography.Text>
-                          <Tag color={local ? "green" : "orange"}>
-                            {local ? t("mcp.registryLocal") : t("mcp.registryRemote")}
-                          </Tag>
-                          {candidate.version && (
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              v{candidate.version}
-                            </Typography.Text>
-                          )}
-                          {!install && <Tag>{t("mcp.registryUnsupported")}</Tag>}
-                        </Space>
-                      }
-                      description={
-                        <div className="flex flex-col gap-1">
-                          <span>{candidate.description}</span>
-                          {/* 远程条目要如实说明请求会发到哪个域名 */}
-                          {!local && host && (
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {t("mcp.registryRemoteHost", { host })}
-                            </Typography.Text>
-                          )}
-                          {requiredCount > 0 && (
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {t("mcp.registryRequiredTitle")}
-                            </Typography.Text>
-                          )}
-                        </div>
-                      }
-                    />
-                  </List.Item>
-                );
-              }}
-            />
-          )}
-
-          {candidates.length > 0 && nextCursor && (
-            <Button size="small" loading={searching} onClick={() => void runSearch(nextCursor)}>
-              {t("mcp.registryLoadMore")}
-            </Button>
-          )}
-
-          {searched && !searching && candidates.length === 0 && (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={t("mcp.registryNoResults")}
-            />
-          )}
-
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t("mcp.registrySourceHint")}
-          </Typography.Text>
-        </div>
-      </Card>
-            ),
-          },
-          {
-            key: "scan",
-            label: t("mcp.tabScan", { count: importable.length }),
-            children: (
-      <Card
-        size="small"
-        title={
-          <Space>
-            <ImportOutlined />
-            <span>{t("mcp.existingTitle")}</span>
-          </Space>
-        }
-        extra={
-          <Space>
-            {importable.length > 0 && (
-              <Button
-                size="small"
-                type="primary"
-                loading={importing}
-                onClick={() =>
-                  void importEntries(
-                    importable.map((entry) => ({ target: entry.target, key: entry.key })),
-                  )
-                }
-              >
-                {t("mcp.existingImportAll", { count: importable.length })}
-              </Button>
-            )}
-            <Button
-              size="small"
-              icon={<SearchOutlined />}
-              loading={scanning}
-              onClick={() => void runScan()}
-            >
-              {scanOutcome ? t("mcp.existingRescan") : t("mcp.existingScan")}
-            </Button>
-          </Space>
-        }
-      >
+      {/* 托管 MCP 单列表 */}
+      {loading && servers.length === 0 ? (
+        <Card loading />
+      ) : visibleServers.length === 0 ? (
+        <Card>
+          <Empty description={servers.length > 0 ? t("mcp.mineNoResults") : t("mcp.emptyTitle")} />
+        </Card>
+      ) : (
         <div className="flex flex-col gap-2">
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t("mcp.existingDesc")}
-          </Typography.Text>
+          {visibleServers.map((server) => (
+            <McpCard
+              key={server.id}
+              server={server}
+              clientStates={clientStatesOf(server)}
+              updateStatus={updateStatuses.find((item) => item.id === server.id)}
+              updating={updating[server.id] || false}
+              busyTarget={busyToggle?.id === server.id ? busyToggle.target : null}
+              targetLabel={targetLabel}
+              onToggleClient={(record, target, next) => void handleToggleClient(record, target, next)}
+              onResolveConflict={(record, target) => void openConflict(record, target)}
+              onToggleEnabled={(record, enabled) => void handleToggleEnabled(record, enabled)}
+              onEdit={(id) => void openEdit(id)}
+              onDelete={handleDelete}
+              onUpdate={(id) => void handleUpdate(id)}
+            />
+          ))}
+        </div>
+      )}
 
-          {/* 单个客户端读不了不影响其它客户端，逐条提示 */}
-          {(scanOutcome?.warnings ?? []).map((warning) => (
+      {/* 扫描到的「野生」MCP：一进来自动列出，一键纳管收编。 */}
+      {(scanOutcome?.warnings.length ?? 0) > 0 && (
+        <div className="flex flex-col gap-1">
+          {scanOutcome?.warnings.map((warning) => (
             <Typography.Text
               key={`${warning.target}:${warning.message}`}
               type="warning"
@@ -1060,84 +960,41 @@ export function McpPage() {
               })}
             </Typography.Text>
           ))}
-
-          {scanOutcome && importable.length === 0 && scanOutcome.entries.length === 0 && (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description={t("mcp.existingEmpty")}
-            />
-          )}
-
-          {(scanOutcome?.entries.length ?? 0) > 0 && (
-            <List
-              size="small"
-              dataSource={scanOutcome?.entries ?? []}
-              rowKey={(entry) => `${entry.target}:${entry.key}`}
-              renderItem={(entry) => {
-                const keys = [...entry.envKeys, ...entry.headerKeys];
-                return (
-                  <List.Item
-                    actions={
-                      entry.managed || entry.importedId
-                        ? [
-                            <Tag key="state" color={entry.managed ? "blue" : "green"}>
-                              {entry.managed
-                                ? t("mcp.existingManagedTag")
-                                : t("mcp.existingImported")}
-                            </Tag>,
-                          ]
-                        : [
-                            <Button
-                              key="import"
-                              size="small"
-                              loading={importing}
-                              onClick={() =>
-                                void importEntries([{ target: entry.target, key: entry.key }])
-                              }
-                            >
-                              {t("mcp.existingImport")}
-                            </Button>,
-                          ]
-                    }
-                  >
-                    <List.Item.Meta
-                      title={
-                        <Space size={6} wrap>
-                          <Typography.Text strong>{entry.name}</Typography.Text>
-                          {/* ScanTarget 与 TargetKind 取值一致，展示名可复用 */}
-                          <Tag>{targetLabel(entry.target as TargetKind)}</Tag>
-                        </Space>
-                      }
-                      description={
-                        <div className="flex flex-col gap-1">
-                          <Typography.Text code style={{ fontSize: 12 }}>
-                            {describeScanned(entry)}
-                          </Typography.Text>
-                          {/* 只列键名，值从不离开后端 */}
-                          {keys.length > 0 && (
-                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {t("mcp.existingKeys", { keys: keys.join(", ") })}
-                            </Typography.Text>
-                          )}
-                        </div>
-                      }
-                    />
-                  </List.Item>
-                );
-              }}
-            />
-          )}
-
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            {t("mcp.existingNote")}
-          </Typography.Text>
         </div>
-      </Card>
-            ),
-          },
-        ]}
-      />
+      )}
 
+      {importable.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Typography.Text strong style={{ fontSize: 13 }}>
+              {t("mcp.unmanagedSectionTitle", { count: importable.length })}
+            </Typography.Text>
+            <span style={{ flex: 1 }} />
+            <Button
+              size="small"
+              type="primary"
+              loading={importing}
+              onClick={confirmImportAll}
+            >
+              {t("mcp.existingImportAll", { count: importable.length })}
+            </Button>
+          </div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t("mcp.unmanagedSectionDesc")}
+          </Typography.Text>
+          {importable.map((entry) => (
+            <UnmanagedMcpCard
+              key={`${entry.target}:${entry.key}`}
+              entry={entry}
+              importing={importing}
+              targetLabel={targetLabel}
+              onImport={(item) => void importEntries([{ target: item.target, key: item.key }])}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 密钥落盘 + 各客户端配置路径提示 */}
       <Card size="small" styles={{ body: { display: "flex", gap: 8, alignItems: "flex-start" } }}>
         <InfoCircleOutlined style={{ color: token.colorTextTertiary, marginTop: 2 }} />
         <div>
@@ -1161,156 +1018,327 @@ export function McpPage() {
         </div>
       </Card>
 
+      {/* 免密钥仓库条目：没有已有目标时问一次装到哪儿 */}
+      <Modal
+        centered
+        destroyOnHidden
+        mask={{ enabled: true }}
+        width={520}
+        open={targetPicker !== null}
+        title={t("mcp.registryTargetPickerTitle")}
+        onCancel={() => setTargetPicker(null)}
+        onOk={() => {
+          const picked = targetPicker;
+          if (!picked) return;
+          setTargetPicker(null);
+          void installDirect(picked, pickerTargets);
+        }}
+        okText={t("mcp.registryInstall")}
+        cancelText={t("common.cancel")}
+        okButtonProps={{ disabled: pickerTargets.length === 0 }}
+      >
+        <div className="flex flex-col gap-2">
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t("mcp.registryTargetPickerDesc", { name: targetPicker?.name ?? "" })}
+          </Typography.Text>
+          <Checkbox.Group
+            value={pickerTargets}
+            onChange={(values) => setPickerTargets(values as TargetKind[])}
+            options={TARGETS.map((target) => ({ label: targetLabel(target), value: target }))}
+          />
+        </div>
+      </Modal>
+
+      <ConflictModal
+        open={conflict !== null}
+        context={conflict}
+        onAdoptTheirs={adoptTheirs}
+        onSkip={skipConflict}
+        onCancel={skipConflict}
+      />
+
+      {/* 添加 / 编辑：新建时可切「手动填写 / 从仓库安装」 */}
       <Modal
         centered
         destroyOnHidden
         mask={{ enabled: true }}
         width={560}
         open={open}
-        title={editingId ? t("mcp.edit") : draft ? t("mcp.registryInstall") : t("mcp.manualAdd")}
+        title={modalTitle}
         onCancel={() => setOpen(false)}
+        footer={
+          addSource === "registry" && !editing && !draft
+            ? [
+                <Button key="close" onClick={() => setOpen(false)}>
+                  {t("common.cancel")}
+                </Button>,
+              ]
+            : undefined
+        }
         onOk={() => void handleSave()}
         okText={t("common.save")}
         cancelText={t("common.cancel")}
       >
-        <Form form={form} layout="vertical">
-          {draft && (
-            <Alert
-              type="info"
-              showIcon
-              style={{ marginBottom: 12 }}
-              message={t("mcp.registryFrom", { name: draft.displayName })}
-              description={
-                <div className="flex flex-col gap-1">
-                  <span style={{ fontSize: 12 }}>{describeDraft(draft, t)}</span>
-                  {draft.repositoryUrl && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {draft.repositoryUrl}
-                    </Typography.Text>
-                  )}
-                </div>
-              }
-            />
-          )}
-
-          {/* 仓库声明必填的字段：逐项让用户填，而不是丢一堆 JSON 让他猜 */}
-          {draft && draft.requiredFields.length > 0 && (
-            <Card size="small" style={{ marginBottom: 12 }}>
-              <Typography.Text strong style={{ fontSize: 12 }}>
-                {t("mcp.registryRequiredTitle")}
-              </Typography.Text>
-              <div className="mt-2 flex flex-col gap-3">
-                {draft.requiredFields.map((field: RegistryRequiredField) => (
-                  <div key={`${field.kind}:${field.name}`}>
-                    <Typography.Text code style={{ fontSize: 12 }}>
-                      {field.name}
-                    </Typography.Text>
-                    {field.secret && (
-                      <Tag color="red" style={{ marginLeft: 6 }}>
-                        {t("mcp.registryRequiredSecret")}
-                      </Tag>
-                    )}
-                    {field.description && (
-                      <div>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          {field.description}
-                        </Typography.Text>
-                      </div>
-                    )}
-                    <Input.Password
-                      visibilityToggle
-                      aria-label={field.name}
-                      status={requiredErrors[field.name] ? "error" : undefined}
-                      value={requiredValues[field.name] ?? ""}
-                      onChange={(event) =>
-                        setRequiredValues((current) => ({
-                          ...current,
-                          [field.name]: event.target.value,
-                        }))
-                      }
-                      style={{ marginTop: 4 }}
-                    />
-                  </div>
-                ))}
-              </div>
-            </Card>
-          )}
-
-          <Form.Item
-            name="name"
-            label={t("mcp.name")}
-            rules={[
-              { required: true, message: t("mcp.nameRequired") },
-              { pattern: /^[A-Za-z0-9_-]+$/, message: t("mcp.nameRule") },
-            ]}
-          >
-            <Input allowClear placeholder="filesystem" />
-          </Form.Item>
-
-          <Form.Item name="kind" label={t("mcp.kind")}>
-            <Segmented options={KIND_OPTIONS} />
-          </Form.Item>
-
-          <Form.Item name="targets" label={t("mcp.targets")}>
-            <Checkbox.Group
-              options={TARGETS.map((target) => ({ label: targetLabel(target), value: target }))}
-            />
-          </Form.Item>
-
-          {/* 简单层：只问「怎么启动」或「连哪里」 */}
-          {kind === "stdio" ? (
-            <>
-              <Form.Item name="command" label={t("mcp.command")}>
-                <Input allowClear placeholder="npx" />
-              </Form.Item>
-              <Form.Item name="argsText" label={t("mcp.args")} extra={t("mcp.argsHint")}>
-                <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
-              </Form.Item>
-            </>
-          ) : (
-            <Form.Item name="url" label={t("mcp.url")}>
-              <Input allowClear placeholder="https://example.com/mcp" />
-            </Form.Item>
-          )}
-
-          <Form.Item name="enabled" valuePropName="checked">
-            <Checkbox>{t("mcp.enabled")}</Checkbox>
-          </Form.Item>
-
-          {/* 箭头放到行尾、去掉头部的内边距，让「高级配置」与上方 Form 标签左对齐 */}
-          <Collapse
-            ghost
-            expandIconPosition="end"
-            styles={{ header: { paddingInline: 0 } }}
-            items={[
-              {
-                key: "advanced",
-                label: t("mcp.advancedSection"),
-                children: (
-                  <>
-                    <Form.Item name="env" label={t("mcp.env")}>
-                      <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="headers"
-                      label={t("mcp.headers")}
-                      extra={kind === "stdio" ? t("mcp.headersStdioHint") : undefined}
-                    >
-                      <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
-                    </Form.Item>
-                    <Form.Item
-                      name="extraConfig"
-                      label={t("mcp.extraConfig")}
-                      extra={t("mcp.extraConfigHint")}
-                    >
-                      <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
-                    </Form.Item>
-                  </>
-                ),
-              },
+        {!editing && !draft && (
+          <Segmented
+            block
+            style={{ marginBottom: 16 }}
+            value={addSource}
+            onChange={(value) => setAddSource(value as AddSource)}
+            options={[
+              { value: "manual", label: t("mcp.addSourceManual") },
+              { value: "registry", label: t("mcp.addSourceRegistry") },
             ]}
           />
-        </Form>
+        )}
+
+        {addSource === "registry" && !editing && !draft ? (
+          <div className="flex flex-col gap-3">
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("mcp.registryDesc")}
+            </Typography.Text>
+            <RegistrySearchBar
+              searching={searching}
+              onQueryChange={(value) => {
+                queryRef.current = value;
+              }}
+              onSubmit={(value) => {
+                queryRef.current = value;
+                setCandidates([]);
+                setNextCursor(null);
+                void runSearch(null);
+              }}
+            />
+            <Space size={8} wrap>
+              <Switch checked={localOnly} size="small" onChange={toggleLocalOnly} />
+              <Typography.Text style={{ fontSize: 12 }}>{t("mcp.registryLocalOnly")}</Typography.Text>
+              <Tooltip title={t("mcp.registryLocalOnlyHint")}>
+                <InfoCircleOutlined style={{ color: token.colorTextTertiary, fontSize: 12 }} />
+              </Tooltip>
+            </Space>
+
+            {candidates.length > 0 && (
+              <List
+                size="small"
+                dataSource={candidates}
+                style={{ maxHeight: 320, overflow: "auto" }}
+                renderItem={(candidate) => {
+                  const install = candidate.draft;
+                  const local =
+                    install?.kind === "stdio" && typeof install.config.command === "string";
+                  const url = typeof install?.config.url === "string" ? install.config.url : "";
+                  const host = url ? hostOf(url) : null;
+                  const requiredCount = install?.requiredFields.length ?? 0;
+                  return (
+                    <List.Item
+                      actions={[
+                        <Button
+                          key="install"
+                          type="primary"
+                          size="small"
+                          disabled={!install}
+                          onClick={() => void installFromRegistry(candidate)}
+                        >
+                          {t("mcp.registryInstall")}
+                        </Button>,
+                      ]}
+                    >
+                      <List.Item.Meta
+                        title={
+                          <Space size={6} wrap>
+                            <Typography.Text strong>{candidate.name}</Typography.Text>
+                            <Tag color={local ? "green" : "orange"}>
+                              {local ? t("mcp.registryLocal") : t("mcp.registryRemote")}
+                            </Tag>
+                            {install &&
+                              (requiredCount > 0 ? (
+                                <Tag color="orange">
+                                  {t("mcp.registryNeedsSecrets", { count: requiredCount })}
+                                </Tag>
+                              ) : (
+                                <Tag color="green">{t("mcp.registryNoSecrets")}</Tag>
+                              ))}
+                            {candidate.version && (
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                v{candidate.version}
+                              </Typography.Text>
+                            )}
+                            {!install && <Tag>{t("mcp.registryUnsupported")}</Tag>}
+                          </Space>
+                        }
+                        description={
+                          <div className="flex flex-col gap-1">
+                            <span>{candidate.description}</span>
+                            {!local && host && (
+                              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                                {t("mcp.registryRemoteHost", { host })}
+                              </Typography.Text>
+                            )}
+                            {install && (
+                              <Typography.Text code style={{ fontSize: 12 }}>
+                                {describeDraft(install, t)}
+                              </Typography.Text>
+                            )}
+                          </div>
+                        }
+                      />
+                    </List.Item>
+                  );
+                }}
+              />
+            )}
+
+            {candidates.length > 0 && nextCursor && (
+              <Button size="small" loading={searching} onClick={() => void runSearch(nextCursor)}>
+                {t("mcp.registryLoadMore")}
+              </Button>
+            )}
+
+            {searched && !searching && candidates.length === 0 && (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("mcp.registryNoResults")} />
+            )}
+
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              {t("mcp.registrySourceHint")}
+            </Typography.Text>
+          </div>
+        ) : (
+          <Form form={form} layout="vertical">
+            {draft && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={t("mcp.registryFrom", { name: draft.displayName })}
+                description={
+                  <div className="flex flex-col gap-1">
+                    <span style={{ fontSize: 12 }}>{describeDraft(draft, t)}</span>
+                    {draft.repositoryUrl && (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        {draft.repositoryUrl}
+                      </Typography.Text>
+                    )}
+                  </div>
+                }
+              />
+            )}
+
+            {draft && draft.requiredFields.length > 0 && (
+              <Card size="small" style={{ marginBottom: 12 }}>
+                <Typography.Text strong style={{ fontSize: 12 }}>
+                  {t("mcp.registryRequiredTitle")}
+                </Typography.Text>
+                <div className="mt-2 flex flex-col gap-3">
+                  {draft.requiredFields.map((field: RegistryRequiredField) => (
+                    <div key={`${field.kind}:${field.name}`}>
+                      <Typography.Text code style={{ fontSize: 12 }}>
+                        {field.name}
+                      </Typography.Text>
+                      {field.secret && (
+                        <Tag color="red" style={{ marginLeft: 6 }}>
+                          {t("mcp.registryRequiredSecret")}
+                        </Tag>
+                      )}
+                      {field.description && (
+                        <div>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            {field.description}
+                          </Typography.Text>
+                        </div>
+                      )}
+                      <Input.Password
+                        visibilityToggle
+                        aria-label={field.name}
+                        status={requiredErrors[field.name] ? "error" : undefined}
+                        value={requiredValues[field.name] ?? ""}
+                        onChange={(event) =>
+                          setRequiredValues((current) => ({
+                            ...current,
+                            [field.name]: event.target.value,
+                          }))
+                        }
+                        style={{ marginTop: 4 }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            <Form.Item
+              name="name"
+              label={t("mcp.name")}
+              rules={[
+                { required: true, message: t("mcp.nameRequired") },
+                { pattern: /^[A-Za-z0-9_-]+$/, message: t("mcp.nameRule") },
+              ]}
+            >
+              <Input allowClear placeholder="filesystem" />
+            </Form.Item>
+
+            <Form.Item name="kind" label={t("mcp.kind")}>
+              <Segmented options={KIND_OPTIONS} />
+            </Form.Item>
+
+            <Form.Item name="targets" label={t("mcp.targets")}>
+              <Checkbox.Group
+                options={TARGETS.map((target) => ({ label: targetLabel(target), value: target }))}
+              />
+            </Form.Item>
+
+            {kind === "stdio" ? (
+              <>
+                <Form.Item name="command" label={t("mcp.command")}>
+                  <Input allowClear placeholder="npx" />
+                </Form.Item>
+                <Form.Item name="argsText" label={t("mcp.args")} extra={t("mcp.argsHint")}>
+                  <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
+                </Form.Item>
+              </>
+            ) : (
+              <Form.Item name="url" label={t("mcp.url")}>
+                <Input allowClear placeholder="https://example.com/mcp" />
+              </Form.Item>
+            )}
+
+            <Form.Item name="enabled" valuePropName="checked">
+              <Checkbox>{t("mcp.enabled")}</Checkbox>
+            </Form.Item>
+
+            <Collapse
+              ghost
+              expandIconPosition="end"
+              styles={{ header: { paddingInline: 0 } }}
+              items={[
+                {
+                  key: "advanced",
+                  label: t("mcp.advancedSection"),
+                  children: (
+                    <>
+                      <Form.Item name="env" label={t("mcp.env")}>
+                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
+                      </Form.Item>
+                      <Form.Item
+                        name="headers"
+                        label={t("mcp.headers")}
+                        extra={kind === "stdio" ? t("mcp.headersStdioHint") : undefined}
+                      >
+                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
+                      </Form.Item>
+                      <Form.Item
+                        name="extraConfig"
+                        label={t("mcp.extraConfig")}
+                        extra={t("mcp.extraConfigHint")}
+                      >
+                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
+                      </Form.Item>
+                    </>
+                  ),
+                },
+              ]}
+            />
+          </Form>
+        )}
       </Modal>
     </div>
   );
