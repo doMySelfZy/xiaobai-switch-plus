@@ -206,7 +206,9 @@ describe("SiteListItem quota summary", () => {
     renderListItem(site);
     await act(async () => {});
 
-    expect(screen.queryByTestId("site-quota-summary")).toBeNull();
+    // R7 兜底：unlimited 显示"无限额度"，颜色为 colorTextQuaternary
+    const summary = screen.getByTestId("site-quota-summary");
+    expect(summary).toHaveTextContent("此 Key 不限额");
     expect(screen.queryByTestId("site-quota-status-placeholder")).toBeNull();
   });
 

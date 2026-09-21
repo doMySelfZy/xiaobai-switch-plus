@@ -210,6 +210,28 @@ export function SiteListItem({
           </span>
         </Tooltip>
       );
+    } else if (quota.unlimited) {
+      // R7 兜底：无限额度（与详情面板 SiteQuotaRow 文案一致）
+      quotaSummary = (
+        <span
+          className="block truncate text-xs"
+          style={{ color: token.colorTextQuaternary }}
+          data-testid="site-quota-summary"
+        >
+          {t("sites.quotaUnlimited")}
+        </span>
+      );
+    } else if (quota.remainingUsd == null && (quota.windows ?? []).length === 0) {
+      // R7 兜底：余额未知且无窗口（与详情面板一致）
+      quotaSummary = (
+        <span
+          className="block truncate text-xs"
+          style={{ color: token.colorTextQuaternary }}
+          data-testid="site-quota-summary"
+        >
+          {t("sites.quotaUnknown")}
+        </span>
+      );
     }
   } else if (quotaAttempt && quotaAttempt.status !== "available") {
     // 列表行只放摘要标签；完整句子（含超时/上游 5xx 细分）归详情面板 SiteQuotaRow。

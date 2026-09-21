@@ -22,6 +22,10 @@
 - R4. 选中行与未选中行使用同一套短标签，选中不改变第二行内容。
 - R5. 没有额度尝试记录时第二行仍然完全留空（区分「没探测过」与「探测过但没额度」）。
 - R6. 未知 status 值不渲染任何标签，保持现有兜底行为。
+- **R7. 列表行补两个 `available` 状态的兜底分支**（修复 AnyRouter 等站点空白问题）：
+  - `available` 且 `unlimited: true` → 显示「无限额度」（与详情面板 `SiteQuotaRow` 文案一致，走现有 i18n key `sites.quotaUnlimited`）
+  - `available` 且 `remainingUsd == null` 且无 `windows` → 显示「额度未知」（与详情面板一致，走现有 key `sites.quotaUnknown`）
+- R8. 两个兜底分支的文字颜色用 `token.colorTextQuaternary`（与失败状态标签同色，区分于正常余额的 `colorTextTertiary`）。
 
 ## Non-Goals
 
@@ -32,8 +36,9 @@
 ## Acceptance Criteria
 
 - [ ] 同一屏内不再出现额度缺失原因的完整句子重复：列表行只有短标签，详情面板只有全称。
-- [ ] 4 个状态各自的短标签在列表行正确渲染；未知状态不渲染。
+- [ ] 4 个失败状态各自的短标签在列表行正确渲染；未知状态不渲染。
+- [ ] 2 个 `available` 兜底分支（无限额度 / 额度未知）在列表行正确渲染，颜色为 `colorTextQuaternary`。
 - [ ] 未探测过的站点第二行仍为空白，不显示任何标签。
 - [ ] `SitesPage.test.tsx` 中「同句出现两处」的断言被替换为「短标签在列表 + 全称在详情」各一处。
-- [ ] `SiteListItem.test.tsx` 的占位断言改用短标签文案。
+- [ ] `SiteListItem.test.tsx` 的占位断言改用短标签文案；新增 unlimited / remainingUsd=null 的渲染断言。
 - [ ] `pnpm typecheck` 与 `pnpm test:run` 通过（已知无关失败：`generateUpdaterManifest.test.ts`、`validateUpdaterSigningSecret.test.ts`）。
