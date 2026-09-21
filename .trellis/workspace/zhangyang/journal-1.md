@@ -607,3 +607,25 @@ MCP页面去页签改单列表，逐客户端四开关即时应用/移除，挂�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 22: 站点列表额度空白兜底
+<!-- trellis-session: v=2 fp=131745f4a460cfab -->
+
+**Date**: 2026-09-21
+**Task**: 站点列表额度空白兜底
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+站点列表行补 available 状态下的两个兜底分支（无限额度 / 额度未知），修复 AnyRouter 等站点第二行空白问题。颜色用 colorTextQuaternary 与失败状态对齐。扩 09-18-site-quota-short-label 任务 PRD 并入该需求。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d855d6f` | fix(sites): 站点列表行补 available 状态的无限额度与额度未知兜底 |
+
+### Status
+
+[OK] **Completed**
