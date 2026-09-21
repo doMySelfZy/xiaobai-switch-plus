@@ -585,3 +585,25 @@ CLI 配置里的口令不一致，表现为四个 CLI 全部 404。
 ### Status
 
 [OK] **Completed**
+
+
+## Session 21: MCP统一单列表改版+纳管关联修复
+<!-- trellis-session: v=2 fp=9aeb3ad73aaee778 -->
+
+**Date**: 2026-09-21
+**Task**: MCP统一单列表改版+纳管关联修复
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+MCP页面去页签改单列表，逐客户端四开关即时应用/移除，挂载自动扫描野生条目就地纳管，添加弹窗双来源（手动/仓库），冲突对比两选（反向入库/跳过），纳管按粗身份关联到所有已存在客户端（只设关联不写盘）。退役ApplyPanel/SavedMcpList，新增ConflictModal/McpCard/UnmanagedMcpCard。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bea8d8a` | feat(mcp): 统一单列表改版 + 纳管关联到所有已存在客户端 |
+
+### Status
+
+[OK] **Completed**

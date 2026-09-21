@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-09-20
+- **Total Sessions**: 21
+- **Last Active**: 2026-09-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~587 | Active |
+| `journal-1.md` | ~609 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-09-21 | MCP统一单列表改版+纳管关联修复 | `bea8d8a` | `feat/site-add-presets` |
 | 20 | 2026-09-20 | 本地NSIS安装包验证收尾归档 | `54aa912` | `feat/site-add-presets` |
 | 19 | 2026-09-20 | 站点全局刷新独立指示器实现与修复 | `63a0b28` | `feat/site-add-presets` |
 | 18 | 2026-09-19 | 移除 ZCode 应用目标：存量清洗、撤退清理器与前端收口（一版到底） | `f54aca1`, `0259420`, `cc9b437` | `feat/site-add-presets` |
