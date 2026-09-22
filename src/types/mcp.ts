@@ -172,4 +172,9 @@ export interface McpImportResult {
   failed: McpImportFailure[];
   /** 命中已有行粗身份、被跳过而未建行的条目（failed 只表示真错误）。 */
   alreadyImported: AlreadyImportedMcp[];
+  /**
+   * 纳管即接管：入库后立即对涉及客户端写盘接管的结果（删手工条目、写 xiaobai_）。
+   * 本次没有任何记录需要接管时为 null/缺省。
+   */
+  apply?: McpApplyResult | null;
 }

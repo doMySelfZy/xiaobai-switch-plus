@@ -773,6 +773,7 @@
     "existingImportSuccess": "已纳管 {{count}} 个 MCP",
     "existingImportPartial": "{{ok}} 个成功，{{failed}} 个失败",
     "existingImportFailed": "纳管失败",
+    "existingImportTakeoverFailed": "以下客户端接管失败，原条目已原样保留（可能在扫描后被改动）：{{targets}}",
     "existingWarning": "{{target}} 读取失败：{{message}}",
     "existingNote": "纳管会把已有的 API Key 等配置加密保存到本应用数据库（只存在你自己的电脑和 WebDAV 里）。不会改动客户端里的原配置。",
 

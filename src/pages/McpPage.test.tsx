@@ -2,7 +2,11 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { App as AntdApp, ConfigProvider } from "antd";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { handleBrowserCommand, resetBrowserMock } from "@/lib/browserMock";
+import {
+  handleBrowserCommand,
+  resetBrowserMock,
+  setBrowserMcpTakeoverFailTargets,
+} from "@/lib/browserMock";
 import { useMcpStore } from "@/stores/mcpStore";
 import { McpPage } from "./McpPage";
 import "@/i18n";
@@ -515,6 +519,42 @@ describe("McpPage", () => {
         expect(useMcpStore.getState().servers).toHaveLength(1);
       });
       expect(useMcpStore.getState().servers[0].name).toBe("existing-fs");
+    });
+
+    it("removes the entry from the wild list after adoption (takeover round-trip)", async () => {
+      // 纳管即接管：入库并写盘后重扫，该条目不再是「未纳管」野生条目。
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      await screen.findByText("existing-fs");
+      const card = unmanagedCard("existing-fs");
+      fireEvent.click(within(card).getByRole("button", { name: /^纳\s*管$/ }));
+
+      // 纳管后重扫：existing-fs 从野生列表消失（不再有对应的未纳管卡片）。
+      await waitFor(() => {
+        expect(
+          screen.queryByText("existing-fs")?.closest('[data-testid="mcp-unmanaged-card"]') ?? null,
+        ).toBeNull();
+      });
+    });
+
+    it("warns when takeover fails for a client during adoption", async () => {
+      // 该客户端里的同名条目在扫描后被改成与库记录不等价 → 接管跳过、原样保留，提示用户。
+      setBrowserMcpTakeoverFailTargets(["codex"]);
+      render(
+        <Wrapper>
+          <McpPage />
+        </Wrapper>,
+      );
+
+      await screen.findByText("existing-fs");
+      const card = unmanagedCard("existing-fs");
+      fireEvent.click(within(card).getByRole("button", { name: /^纳\s*管$/ }));
+
+      expect(await screen.findByText(/接管失败/)).toBeInTheDocument();
     });
 
     it("adopts all remaining wild entries at once", async () => {

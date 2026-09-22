@@ -54,12 +54,12 @@
 
 ### 已有 MCP 的扫描与纳管
 
-用户可以把手工配过的 MCP 纳管进来（`adapters/mcp_scan.rs` + `scan_existing_mcp` / `import_scanned_mcp`）。两条硬约束：
+用户可以把手工配过的 MCP 纳管进来（`adapters/mcp_scan.rs` + `scan_existing_mcp` / `import_scanned_mcp`）。硬约束：
 
-- **扫描只回元数据**：`ScannedMcp` 只带密钥**键名**（`env_keys` / `header_keys`），绝不带值。密钥值只在纳管时由后端按 `(target, key)` 定位符重新读盘取得，**不经过前端**；`import_scanned_mcp` 也只回元数据（`repo::mcp::save` 的返回值含明文，不得回传）。
-- **应用时先接管，避免重复加载**：若目标里存在同名的**未托管**条目，必须先判断它是否仍与库内记录等价（忽略 `type`/`transport` 这类显式类型标记）：
+- **扫描只回元数据**：`ScannedMcp` 只带密钥**键名**（`env_keys` / `header_keys`），绝不带值。密钥值只在纳管时由后端按 `(target, key)` 定位符重新读盘取得，**不经过前端**；`import_scanned_mcp` 也只回元数据（`repo::mcp::save` 的返回值含明文，不得回传）。返回值携带 `apply: Option<McpApplyResult>`（本次接管写盘结果，只含 target/ok/backup_paths/message，无密钥）。
+- **纳管即接管，避免重复加载**：一份 MCP 若按粗身份（`kind + config`）存在于多个客户端，纳管**只建一条记录**，其 `targets` 取所有同款客户端的并集、全部启用（`scan_target_union`）；`import_scanned_mcp` 入库后**立即**对这些客户端复用应用路径（`apply_to_targets`）写盘接管，并把这些目标记进 `applied_targets`——删除该记录时才能把所有关联客户端里的 `xiaobai_<name>` 一起清干净。接管的等价判定：若目标里存在同名的**未托管**条目，判断它是否仍与库内记录等价（忽略 `type`/`transport` 这类显式类型标记）：
   - 等价 → 删除它再写 `xiaobai_<name>`，净结果仍是一条；
-  - 不等价（用户纳管后又改过）→ **报错并跳过该目标**，文件原样保留，绝不用库里的旧版本覆盖用户的改动。
+  - 不等价（用户扫描后又改过）→ **报错并跳过该目标**，文件原样保留，绝不用库里的旧版本覆盖用户的改动（失败目标记在返回的 `apply.results` 里，前端据此提示）。
 
   漏掉接管会让客户端同时加载两份同一个 MCP。Codex 侧用 `codex_entry_to_json` / `codex_record_to_json` 把 `http_headers` 与 `env` 子表规约成同一形态，两个方向共用一套口径。
 

@@ -573,6 +573,9 @@ pub struct McpImportResult {
     pub failed: Vec<McpImportFailure>,
     /// 命中已有行粗身份、被跳过而未建行的条目（既有行为：`failed` 仍只表示真错误）。
     pub already_imported: Vec<AlreadyImportedMcp>,
+    /// 纳管即接管：入库后立即对涉及的客户端写盘接管的结果（删手工条目、写 `xiaobai_`）。
+    /// 本次没有成功入库/命中任何记录（无客户端需要接管）时为 `None`。
+    pub apply: Option<McpApplyResult>,
 }
 
 /// 单条纳管的两种归宿。`AlreadyImported` 不建任何行、不碰已有行。
@@ -624,15 +627,25 @@ fn import_entry(
     Ok(ImportOutcome::Imported(summarize_server(&server)))
 }
 
-/// 纳管：把扫描到的条目导入数据库，env/headers 走既有加密存储。
+/// 纳管：把扫描到的条目导入数据库，env/headers 走既有加密存储，随后**立即接管**。
 ///
-/// 密钥值由后端按定位符直接读盘取得，**不经过前端**。导入本身不修改来源客户端文件——
-/// 接管（删除等价的手工条目）发生在之后的「应用」时，且有指纹校验兜底。
-/// 命中已有行粗身份的条目进 `already_imported`（不建行、不动已有行），真错误才进 `failed`。
-/// `(async)`：逐条读盘并做加密入库，属于纯磁盘工作。
+/// 密钥值由后端按定位符直接读盘取得，**不经过前端**。纳管即接管：入库后立刻对涉及的
+/// 客户端复用「应用」路径写盘——删掉等价的手工条目、写入 `xiaobai_<name>`，备份+原子替换+
+/// 锁+指纹校验一并生效。同名条目在扫描后被用户改成不等价时，适配器报错跳过该目标、原样
+/// 保留文件（结果记在返回值的 `apply` 里）。命中已有行粗身份的条目进 `already_imported`
+/// （不建行、不动已有行），真错误才进 `failed`。
+/// `(async)`：逐条读盘、加密入库再写客户端文件，属于纯磁盘工作。
 #[tauri::command(async)]
 pub fn import_scanned_mcp(
     state: State<'_, AppState>,
+    locators: Vec<McpImportLocator>,
+) -> AppResult<McpImportResult> {
+    import_scanned_mcp_impl(&state, locators)
+}
+
+/// 纳管主体，取 `&AppState` 便于端到端测试（命令层只做 `State` → `&AppState` 转接）。
+fn import_scanned_mcp_impl(
+    state: &AppState,
     locators: Vec<McpImportLocator>,
 ) -> AppResult<McpImportResult> {
     use crate::adapters::mcp_scan;
@@ -643,7 +656,6 @@ pub fn import_scanned_mcp(
     let mut already_imported = Vec::new();
 
     // 纳管即关联到**当前存在同一份配置**的所有客户端：扫一遍四端，按粗身份聚合目标并集。
-    // 只设关联、不立即写盘——写盘留给用户之后的「应用」，与既有接管指纹校验兜底一致。
     let identity_targets = scan_target_union(&mcp_scan::scan_all(&settings).entries);
 
     for locator in locators {
@@ -670,11 +682,69 @@ pub fn import_scanned_mcp(
         }
     }
 
+    // 纳管即接管：对本次入库或命中记录所覆盖的客户端并集立即写盘。
+    // 复用应用路径（含接管删手工条目、备份、原子替换、锁、指纹校验），并把这些目标记进
+    // applied_targets——删除该记录时才能把所有关联客户端里的 `xiaobai_` 一起清干净。
+    let touched = touched_targets(state, &imported, &already_imported)?;
+    let apply = if touched.is_empty() {
+        None
+    } else {
+        Some(apply_to_targets(state, &touched)?)
+    };
+
     Ok(McpImportResult {
         imported,
         failed,
         already_imported,
+        apply,
     })
+}
+
+/// 本次纳管涉及的客户端并集：入库记录 + 命中的已有记录，各自 targets 去重合并。
+///
+/// 首次纳管多客户端 MCP 走 `imported`，其 targets 已是并集；重复纳管同款走 `already_imported`，
+/// 用命中记录当前的 targets 兜底补接管尚未写盘的客户端。
+fn touched_targets(
+    state: &AppState,
+    imported: &[McpServerSummary],
+    already_imported: &[AlreadyImportedMcp],
+) -> AppResult<Vec<TargetKind>> {
+    // 命中已有行时要用它当前的 targets 补接管，故只在有 already_imported 时才回读库。
+    let servers = if already_imported.is_empty() {
+        Vec::new()
+    } else {
+        state.db.with_conn(|conn| repo::mcp::list_full(conn, &state.crypto))?
+    };
+    Ok(merge_touched_targets(imported, already_imported, &servers))
+}
+
+/// 纯逻辑：合并本次纳管涉及的客户端并集，去重。抽出来便于脱离数据库单测。
+///
+/// `imported` 的 targets 已是并集（新建行时按粗身份并集设定）；`already_imported` 用命中记录
+/// 当前的 targets 兜底——补接管那些同款却尚未写盘的客户端。
+fn merge_touched_targets(
+    imported: &[McpServerSummary],
+    already_imported: &[AlreadyImportedMcp],
+    servers: &[McpServer],
+) -> Vec<TargetKind> {
+    let mut touched: Vec<TargetKind> = Vec::new();
+    let mut push = |targets: &[TargetKind], touched: &mut Vec<TargetKind>| {
+        for target in targets {
+            if !touched.contains(target) {
+                touched.push(*target);
+            }
+        }
+    };
+
+    for summary in imported {
+        push(&summary.targets, &mut touched);
+    }
+    for existing in already_imported {
+        if let Some(server) = servers.iter().find(|server| server.id == existing.existing_id) {
+            push(&server.targets, &mut touched);
+        }
+    }
+    touched
 }
 
 #[cfg(test)]
@@ -1309,5 +1379,209 @@ mod tests {
         assert!(results[0].ok, "{}", results[0].message);
         let text = fs::read_to_string(pi_dir.join("mcp.json")).unwrap();
         assert!(text.contains("xiaobai_solo"), "{text}");
+    }
+
+    // ------------------------------------------------------------------
+    // 纳管即接管：本次纳管涉及的客户端并集计算（决定接管写盘打到哪些目标）。
+    // ------------------------------------------------------------------
+
+    fn summary_fixture(id: &str, targets: Vec<TargetKind>) -> McpServerSummary {
+        McpServerSummary {
+            id: id.to_string(),
+            name: id.to_string(),
+            kind: McpKind::Stdio,
+            enabled: true,
+            targets,
+            created_at: 0,
+            updated_at: 0,
+            current_version: None,
+            latest_version: None,
+            last_update_check_at: None,
+        }
+    }
+
+    fn already_imported_fixture(existing_id: &str) -> AlreadyImportedMcp {
+        AlreadyImportedMcp {
+            target: crate::adapters::mcp_scan::ScanTarget::ClaudeCode,
+            key: existing_id.to_string(),
+            existing_id: existing_id.to_string(),
+            existing_name: existing_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn touched_targets_union_new_rows_and_dedupe() {
+        // 首次纳管多客户端 MCP：imported 行的 targets 就是并集，跨行再去重。
+        let touched = merge_touched_targets(
+            &[
+                summary_fixture("a", vec![TargetKind::ClaudeCode, TargetKind::Codex]),
+                summary_fixture("b", vec![TargetKind::Codex, TargetKind::Pi]),
+            ],
+            &[],
+            &[],
+        );
+        assert_eq!(touched.len(), 3, "并集去重: {touched:?}");
+        assert!(touched.contains(&TargetKind::ClaudeCode));
+        assert!(touched.contains(&TargetKind::Codex));
+        assert!(touched.contains(&TargetKind::Pi));
+    }
+
+    #[test]
+    fn touched_targets_use_existing_record_for_already_imported() {
+        // 重复纳管同款：命中已有行，用它当前的 targets 补接管尚未写盘的客户端。
+        let existing = server_fixture(
+            "seq",
+            json!({"command": "npx"}),
+            vec![TargetKind::ClaudeCode, TargetKind::Prime],
+            true,
+        );
+        let touched = merge_touched_targets(
+            &[],
+            &[already_imported_fixture(&existing.id)],
+            &[existing.clone()],
+        );
+        assert_eq!(touched, vec![TargetKind::ClaudeCode, TargetKind::Prime]);
+    }
+
+    #[test]
+    fn touched_targets_empty_when_nothing_imported() {
+        // 全部 failed（无 imported / already_imported）→ 无目标需要接管，不触发写盘。
+        assert!(merge_touched_targets(&[], &[], &[]).is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // 纳管即接管：端到端（tempdir 客户端文件）。覆盖 import_scanned_mcp_impl 的接线本身
+    // ——若删掉「入库后调 apply_to_targets」两行，这些断言就会失败。
+    // ------------------------------------------------------------------
+
+    use std::sync::atomic::{AtomicBool, AtomicI64};
+
+    /// 串行化会改真实进程环境变量（XIAOBAI_SWITCH_DATA_DIR）的用例，避免并行互相踩。
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_state(conn: Connection) -> AppState {
+        AppState {
+            db: crate::db::Db { conn: std::sync::Mutex::new(conn) },
+            crypto: test_crypto(),
+            close_to_tray: AtomicBool::new(true),
+            start_in_tray: AtomicBool::new(false),
+            is_quitting: AtomicBool::new(false),
+            webdav_sync_handle: tokio::sync::Mutex::new(None),
+            webdav_operation: tokio::sync::Mutex::new(()),
+            next_webdav_sync_at: AtomicI64::new(0),
+            local_proxy: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    fn claude_mcp_keys(path: &Path) -> Vec<String> {
+        let text = fs::read_to_string(path).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        value
+            .get("mcpServers")
+            .and_then(|servers| servers.as_object())
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn codex_mcp_keys(path: &Path) -> Vec<String> {
+        let text = fs::read_to_string(path).unwrap();
+        let doc: toml_edit::DocumentMut = text.parse().unwrap();
+        doc.get("mcp_servers")
+            .and_then(|item| item.as_table_like())
+            .map(|table| table.iter().map(|(k, _)| k.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn adopt_takes_over_all_matching_clients_and_delete_cleans_them() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        // backups_dir() 走 app_dir()，靠这个环境变量隔离到 tempdir。
+        std::env::set_var("XIAOBAI_SWITCH_DATA_DIR", &data_dir);
+
+        let claude_dir = dir.path().join("claude");
+        let codex_dir = dir.path().join("codex");
+        let pi_dir = dir.path().join("pi");
+        let prime_dir = dir.path().join("prime");
+        for d in [&claude_dir, &codex_dir, &pi_dir, &prime_dir] {
+            fs::create_dir_all(d).unwrap();
+        }
+        // 同一个 MCP 手工配在 Claude 与 Codex（同粗身份：command + args 一致）。
+        let claude_path = claude_dir.join(".claude.json");
+        fs::write(
+            &claude_path,
+            r#"{"mcpServers":{"existing-fs":{"command":"npx","args":["-y","fs-mcp"]}}}"#,
+        )
+        .unwrap();
+        let codex_path = codex_dir.join("config.toml");
+        fs::write(
+            &codex_path,
+            "[mcp_servers.existing-fs]\ncommand = \"npx\"\nargs = [\"-y\", \"fs-mcp\"]\n",
+        )
+        .unwrap();
+
+        let conn = db_conn();
+        let settings = AppSettings {
+            claude_home_override: Some(claude_dir.to_string_lossy().to_string()),
+            codex_home_override: Some(codex_dir.to_string_lossy().to_string()),
+            pi_agent_dir_override: Some(pi_dir.to_string_lossy().to_string()),
+            prime_agent_dir_override: Some(prime_dir.to_string_lossy().to_string()),
+            ..Default::default()
+        };
+        repo::settings::save_settings(&conn, &settings).unwrap();
+        let state = test_state(conn);
+
+        // 从 Claude 纳管一次。
+        let result = import_scanned_mcp_impl(
+            &state,
+            vec![McpImportLocator {
+                target: crate::adapters::mcp_scan::ScanTarget::ClaudeCode,
+                key: "existing-fs".to_string(),
+            }],
+        )
+        .unwrap();
+
+        // 单条记录、targets = 并集 [Claude, Codex]。
+        assert_eq!(result.imported.len(), 1, "只建一条记录");
+        let servers = state.db.with_conn(|c| repo::mcp::list(c, &state.crypto)).unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].name, "existing-fs");
+        assert!(servers[0].targets.contains(&TargetKind::ClaudeCode));
+        assert!(servers[0].targets.contains(&TargetKind::Codex));
+
+        // 接管全绿，两端都写了盘。
+        let apply = result.apply.expect("纳管应触发接管写盘");
+        assert!(apply.results.iter().all(|r| r.ok), "接管应全成功: {apply:?}");
+
+        // Claude：手工键消失，托管键出现。
+        let keys = claude_mcp_keys(&claude_path);
+        assert!(keys.contains(&"xiaobai_existing-fs".to_string()), "{keys:?}");
+        assert!(!keys.contains(&"existing-fs".to_string()), "手工条目须被接管删除: {keys:?}");
+
+        // Codex：同理（按解析后的 mcp_servers 键判定，避免 xiaobai_ 前缀的子串误伤）。
+        let codex_keys = codex_mcp_keys(&codex_path);
+        assert!(codex_keys.contains(&"xiaobai_existing-fs".to_string()), "{codex_keys:?}");
+        assert!(
+            !codex_keys.contains(&"existing-fs".to_string()),
+            "Codex 手工条目须被接管删除: {codex_keys:?}"
+        );
+
+        // 删除该记录：两端托管条目一起清干净（复刻 delete_mcp_server 的两步）。
+        let id = servers[0].id.clone();
+        state.db.with_conn(|c| repo::mcp::delete(c, &id)).unwrap();
+        apply_to_targets(&state, &[]).unwrap();
+
+        assert!(
+            claude_mcp_keys(&claude_path).is_empty(),
+            "删除后 Claude 不应残留任何托管条目"
+        );
+        assert!(
+            codex_mcp_keys(&codex_path).is_empty(),
+            "删除后 Codex 不应残留托管条目"
+        );
+
+        std::env::remove_var("XIAOBAI_SWITCH_DATA_DIR");
     }
 }

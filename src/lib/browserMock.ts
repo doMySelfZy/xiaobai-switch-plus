@@ -212,6 +212,8 @@ const exclusions = new Map<string, Set<string>>();
 let quotaProbeCallCount = 0;
 let quotaProbeHandler: ((site: Site) => SiteQuota | Promise<SiteQuota>) | null = null;
 let mcpServers: McpServer[] = [];
+/** 测试注入：纳管即接管时，这些目标回失败（模拟客户端条目被扫描后改成不等价）。 */
+let mcpTakeoverFailTargets: Set<TargetKind> = new Set();
 
 /** 浏览器模式下模拟「其它客户端里手工配过的 MCP」，覆盖托管/自有/需要密钥三类。 */
 const INITIAL_SCANNED_MCP: ScannedMcp[] = [
@@ -445,6 +447,7 @@ export function resetBrowserMock() {
   quotaProbeCallCount = 0;
   quotaProbeHandler = null;
   mcpServers = [];
+  mcpTakeoverFailTargets = new Set();
   scannedMcp = INITIAL_SCANNED_MCP.map((entry) => ({ ...entry }));
   agentRules = { body: "", targets: [], updatedAt: 0 };
   skills = INITIAL_SKILLS.map((skill) => ({ ...skill }));
@@ -456,6 +459,11 @@ export function resetBrowserMock() {
 
 export function getBrowserQuotaProbeCallCount() {
   return quotaProbeCallCount;
+}
+
+/** 测试注入：纳管即接管时让指定目标回失败，用于验证接管失败提示。 */
+export function setBrowserMcpTakeoverFailTargets(targets: TargetKind[]) {
+  mcpTakeoverFailTargets = new Set(targets);
 }
 
 export function setBrowserQuotaProbeHandler(
@@ -1931,7 +1939,12 @@ export async function handleBrowserCommand<T>(
     }
     case "import_scanned_mcp": {
       const locators = (args?.locators ?? []) as McpImportLocator[];
-      const result: McpImportResult = { imported: [], failed: [], alreadyImported: [] };
+      const result: McpImportResult = {
+        imported: [],
+        failed: [],
+        alreadyImported: [],
+        apply: null,
+      };
       // 与后端 scan_target_union 同口径：纳管即关联到当前存在同款配置的所有客户端（只设关联，不写盘）。
       const targetOrder: TargetKind[] = ["claude_code", "codex", "pi", "prime"];
       const identityTargets = new Map<string, TargetKind[]>();
@@ -1991,6 +2004,35 @@ export async function handleBrowserCommand<T>(
         const { config: _config, env: _env, headers: _headers, ...summary } = saved;
         result.imported.push(summary);
       }
+      // 纳管即接管：入库后立即写盘。mock 不碰真实客户端文件，这里回一份成功的接管结果，
+      // 覆盖本次涉及记录的客户端并集，让前端能读到 apply.results。
+      const touched: TargetKind[] = [];
+      for (const summary of result.imported) {
+        for (const target of summary.targets) {
+          if (!touched.includes(target)) touched.push(target);
+        }
+      }
+      for (const already of result.alreadyImported) {
+        const server = mcpServers.find((s) => s.id === already.existingId);
+        for (const target of server?.targets ?? []) {
+          if (!touched.includes(target)) touched.push(target);
+        }
+      }
+      result.apply =
+        touched.length > 0
+          ? {
+              results: touched.map((target) => {
+                const failed = mcpTakeoverFailTargets.has(target);
+                return {
+                  target,
+                  ok: !failed,
+                  backupPaths: [],
+                  message: failed ? "客户端条目已被改动，接管跳过" : "",
+                };
+              }),
+              appliedAt: now(),
+            }
+          : null;
       return result as T;
     }
     case "mcp_target_paths":

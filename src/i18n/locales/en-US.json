@@ -773,6 +773,7 @@
     "existingImportSuccess": "Imported {{count}} MCP servers",
     "existingImportPartial": "{{ok}} succeeded, {{failed}} failed",
     "existingImportFailed": "Import failed",
+    "existingImportTakeoverFailed": "Takeover failed for these clients; their original entries were left untouched (they may have changed since the scan): {{targets}}",
     "existingWarning": "Could not read {{target}}: {{message}}",
     "existingNote": "Importing stores existing API keys and config encrypted in this app's database (only on your own machine and your WebDAV). The original client config is left untouched.",
 

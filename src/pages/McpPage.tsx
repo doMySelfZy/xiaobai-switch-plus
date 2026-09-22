@@ -660,6 +660,16 @@ export function McpPage() {
             `${t("mcp.existingImportFailed")}: ${result.failed[0]?.message ?? ""}`,
           );
         }
+        // 纳管即接管：入库后立即写盘。某客户端里的同名条目在扫描后被改成与库记录不等价时，
+        // 接管会跳过该目标并原样保留文件——提示用户哪些客户端没接管成功。
+        const takeoverFailed = (result.apply?.results ?? []).filter((r) => !r.ok);
+        if (takeoverFailed.length > 0) {
+          void message.warning(
+            t("mcp.existingImportTakeoverFailed", {
+              targets: takeoverFailed.map((r) => targetLabel(r.target)).join("、"),
+            }),
+          );
+        }
         setScanOutcome(await scanExisting());
       } catch (error) {
         void message.error(errorText(error));
@@ -667,7 +677,7 @@ export function McpPage() {
         setImporting(false);
       }
     },
-    [importScanned, scanExisting, message, t],
+    [importScanned, scanExisting, message, t, targetLabel],
   );
 
   const confirmImportAll = () => {
