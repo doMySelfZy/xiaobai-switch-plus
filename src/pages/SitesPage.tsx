@@ -161,8 +161,8 @@ export function SitesPage() {
   }, [selected?.id, selected?.baseUrl, selected?.quotaRevision, selected?.hasKey, probeQuota, message, t]);
 
   /**
-   * 详情页手动刷新单个站点：模型 + 余额同一轮等齐（与全局刷新同一套口径，
-   * 余额同样写后端缓存、悬浮窗能读到），列表行指示器跟着这一轮亮灭。
+   * 详情页手动刷新单个站点：模型 + 余额同一轮等齐（与全局刷新同一套口径），
+   * 列表行指示器跟着这一轮亮灭。
    */
   const handleFetchModels = useCallback(
     async (site: Site) => {
@@ -195,9 +195,8 @@ export function SitesPage() {
 
   const handleRefreshQuota = useCallback(async () => {
     if (!selected) return;
-    // 余额单刷走 refresh_site_quota（写后端悬浮窗余额缓存并 emit），不能用 probe：
-    // probe 只回给调用方，悬浮窗会静默读到旧值。指示器的进入 / 摘除收敛在
-    // refreshSiteQuota 里（与 refreshSiteModelsAndQuota 同一口径），这里只管提示。
+    // 指示器的进入 / 摘除收敛在 refreshSiteQuota 里（与 refreshSiteModelsAndQuota
+    // 同一口径），这里只管提示。
     const siteId = selected.id;
     try {
       const result = await refreshSiteQuota(siteId);

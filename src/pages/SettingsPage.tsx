@@ -10,23 +10,10 @@ import {
   GITHUB_RELEASES_URL,
   GITHUB_REPO_URL,
 } from "@/lib/constants";
-import { invoke, isAppError, isTauri } from "@/lib/invoke";
+import { invoke, isAppError } from "@/lib/invoke";
 import { openExternalUrl } from "@/lib/openUrl";
 import type { AppPaths, AppSettings, ProxyMode, ProxyProtocol } from "@/types/domain";
 import { SettingsSidebar } from "@/components/settings/SettingsSidebar";
-
-/**
- * 通知悬浮窗设置变了。
- *
- * 悬浮窗是独立 webview，拿不到这里的 store；跨窗口只能走 Tauri 事件。
- * 非 Tauri 环境（浏览器 dev / 测试）没有事件系统，静默跳过。
- */
-function notifyFloatingSettingsChanged() {
-  if (!isTauri()) return;
-  void import("@tauri-apps/api/event")
-    .then(({ emit }) => emit("floating-settings-changed"))
-    .catch(() => undefined);
-}
 import { SettingsGroup } from "@/components/settings/SettingsGroup";
 import { BackupCenter } from "@/components/settings/BackupCenter";
 import { useUpdateCheckBusy, useUpdateChecker } from "@/hooks/useUpdateChecker";
@@ -284,62 +271,6 @@ function GeneralSection() {
               { value: "user_env", label: t("settings.codexEnvUser") },
               { value: "file_only", label: t("settings.codexEnvFile") },
             ]}
-          />
-        </div>
-      </SettingsGroup>
-
-      <SettingsGroup title={t("settings.groupFloatingWindow")}>
-        <div style={rowStyle} className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <div>{t("settings.floatingWindowEnabled")}</div>
-            <div className="text-xs" style={{ color: token.colorTextSecondary }}>
-              {t("settings.floatingWindowEnabledHint")}
-            </div>
-          </div>
-          <Switch
-            checked={settings.floatingWindow?.enabled ?? true}
-            onChange={(enabled) => {
-              void patch({
-                floatingWindow: {
-                  enabled,
-                  autoRefreshMinutes: settings.floatingWindow?.autoRefreshMinutes ?? 5,
-                  positionX: settings.floatingWindow?.positionX ?? 100,
-                  positionY: settings.floatingWindow?.positionY ?? 100,
-                  collapsed: settings.floatingWindow?.collapsed ?? false,
-                },
-              });
-              if (enabled) {
-                invoke("toggle_floating_window", {}).catch((e) => {
-                  message.error(t("settings.floatingWindowOpenFailed"));
-                  console.error(e);
-                });
-              }            }}
-          />
-        </div>
-        <Divider style={{ margin: "8px 0" }} />
-        <div style={rowStyle} className="flex items-center justify-between gap-4">
-          <span>{t("settings.floatingWindowRefreshInterval")}</span>
-          <NumberDraftInput
-            size="small"
-            min={1}
-            max={60}
-            step={1}
-            style={{ width: 120 }}
-            value={settings.floatingWindow?.autoRefreshMinutes ?? 5}
-            onCommit={(autoRefreshMinutes) => {
-              void patch({
-                floatingWindow: {
-                  enabled: settings.floatingWindow?.enabled ?? true,
-                  autoRefreshMinutes,
-                  positionX: settings.floatingWindow?.positionX ?? 100,
-                  positionY: settings.floatingWindow?.positionY ?? 100,
-                  collapsed: settings.floatingWindow?.collapsed ?? false,
-                },
-              });
-              // 让已打开的悬浮窗立刻按新间隔刷新，不必重开。
-              notifyFloatingSettingsChanged();
-            }}
-            addonAfter={t("settings.minutes")}
           />
         </div>
       </SettingsGroup>

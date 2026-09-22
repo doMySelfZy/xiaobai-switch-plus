@@ -22,6 +22,9 @@ import { useSiteStore } from "@/stores";
 import type { RestoreStartupResult } from "@/types/domain";
 import "./i18n";
 
+/** 主窗口站点余额定时刷新间隔（毫秒）。 */
+const AUTO_REFRESH_MS = 2 * 60_000;
+
 async function showWindow() {
   try {
     const { getCurrentWebviewWindow } = await import("@tauri-apps/api/webviewWindow");
@@ -142,9 +145,6 @@ function AppInner({ isDark }: { isDark: boolean }) {
   const activePage = useUIStore((s) => s.activePage);
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
   const settingsLoaded = useSettingsStore((s) => s.loaded);
-  const autoRefreshMinutes = useSettingsStore(
-    (s) => s.settings.floatingWindow?.autoRefreshMinutes ?? 5,
-  );
   const refreshAllSites = useSiteStore((s) => s.refreshAllSites);
   const rootRef = useRef<HTMLDivElement>(null);
   const restoreResultReadRef = useRef(false);
@@ -164,30 +164,12 @@ function AppInner({ isDark }: { isDark: boolean }) {
 
   useEffect(() => {
     if (!settingsLoaded) return;
-    const intervalMs = Math.max(1, autoRefreshMinutes) * 60_000;
     void refreshAllSites().catch(() => undefined);
     const timer = window.setInterval(() => {
       void refreshAllSites().catch(() => undefined);
-    }, intervalMs);
+    }, AUTO_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [autoRefreshMinutes, refreshAllSites, settingsLoaded]);
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void import("@tauri-apps/api/event")
-      .then(({ listen }) => listen("sites-refresh-requested", () => refreshAllSites()))
-      .then((fn) => {
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch(() => undefined);
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [refreshAllSites]);
+  }, [refreshAllSites, settingsLoaded]);
 
   useEffect(() => {
     if (!settingsLoaded || restoreResultReadRef.current) return;

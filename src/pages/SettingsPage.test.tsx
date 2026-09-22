@@ -576,37 +576,4 @@ describe("SettingsPage number inputs", () => {
     expect(save).toHaveBeenCalledWith({ routeProbeTtlMinutes: 77 });
   });
 
-  it("saves the floating window interval on blur in the general section", async () => {
-    const save = installSaveSettingsSpy();
-    act(() => {
-      useUIStore.setState({ settingsTab: "general" });
-    });
-    render(
-      <Wrapper>
-        <SettingsPage />
-      </Wrapper>,
-    );
-
-    const input = (await screen.findByRole("spinbutton")) as HTMLInputElement;
-    await waitFor(() => {
-      expect(input.value).toBe("5");
-    });
-    fireEvent.focus(input);
-    fireEvent.change(input, { target: { value: "20" } });
-    expect(save).not.toHaveBeenCalled();
-
-    fireEvent.blur(input);
-    await waitFor(() => {
-      expect(save).toHaveBeenCalledTimes(1);
-    });
-    expect(save).toHaveBeenCalledWith({
-      floatingWindow: {
-        enabled: true,
-        autoRefreshMinutes: 20,
-        positionX: 100,
-        positionY: 100,
-        collapsed: false,
-      },
-    });
-  });
 });

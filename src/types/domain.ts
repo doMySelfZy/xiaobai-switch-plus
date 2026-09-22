@@ -384,15 +384,6 @@ export interface AppSettings {
   closeToTray: boolean;
   /** Keep the main window hidden on launch. Disabled when closeToTray is off. */
   startInTray: boolean;
-  /** Floating window settings */
-  floatingWindow?: {
-    enabled: boolean;
-    /** 自动刷新间隔（分钟）。与后端 `auto_refresh_minutes` 同名同单位。 */
-    autoRefreshMinutes: number;
-    positionX: number;
-    positionY: number;
-    collapsed: boolean;
-  };
 }
 
 export interface WebDavConfigView {
@@ -559,14 +550,6 @@ export interface SiteQuota {
   error: string | null;
   /** OpenCode Go usage windows; empty/absent for other quota sources. */
   windows?: QuotaWindow[];
-}
-
-export interface SiteQuotaSummary {
-  siteId: string;
-  siteName: string;
-  enabled: boolean;
-  sortOrder: number;
-  quota: SiteQuota | null;
 }
 
 export interface HttpBytesResult {

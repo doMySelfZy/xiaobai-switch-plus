@@ -336,7 +336,7 @@ export function SiteListItem({
               />
             </span>
           )}
-          {/* 列表里直接开关：禁用后不再探测额度、不参与模型获取、也不出现在悬浮窗，
+          {/* 列表里直接开关：禁用后不再探测额度、不参与模型获取，
               所以不必先点进详情页才能关掉某个不想用的站点。 */}
           <Tooltip title={site.enabled ? t("sites.disabledHint") : t("sites.enabledHint")}>
             <Switch

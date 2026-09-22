@@ -76,13 +76,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   localProxyTargets: [],
   closeToTray: true,
   startInTray: false,
-  floatingWindow: {
-    enabled: true,
-    autoRefreshMinutes: 5,
-    positionX: 100,
-    positionY: 100,
-    collapsed: false,
-  },
 };
 
 function declareClaude1m(modelId: string, enabled: boolean): string {
@@ -422,12 +415,7 @@ function initialInstalledSkillSources(): Map<string, string> {
 }
 
 export function resetBrowserMock() {
-  settings = {
-    ...DEFAULT_SETTINGS,
-    floatingWindow: DEFAULT_SETTINGS.floatingWindow
-      ? { ...DEFAULT_SETTINGS.floatingWindow }
-      : undefined,
-  };
+  settings = { ...DEFAULT_SETTINGS };
   sites = [];
   siteProxyHeaders = new Map();
   proxyRuntime = null;
@@ -476,10 +464,7 @@ export function setBrowserQuotaProbeHandler(
   quotaProbeHandler = handler;
 }
 
-/**
- * 单站额度探测的 mock 口径。真实实现里 `probe_site_quota` 与 `refresh_site_quota`
- * 走同一个探测函数，后者只多写一次悬浮窗缓存，所以两边共用这份形状。
- */
+/** 单站额度探测的 mock 口径，`probe_site_quota` 使用。 */
 async function mockProbeQuota(site: Site): Promise<SiteQuota> {
   if (quotaProbeHandler) return quotaProbeHandler(site);
   if (isOpenCodeGoBase(site.baseUrl)) {
@@ -741,13 +726,7 @@ export async function handleBrowserCommand<T>(
       return settings as T;
     case "save_settings": {
       const partial = (args?.partial ?? {}) as Partial<AppSettings>;
-      settings = {
-        ...settings,
-        ...partial,
-        floatingWindow: partial.floatingWindow
-          ? { ...settings.floatingWindow, ...partial.floatingWindow }
-          : settings.floatingWindow,
-      };
+      settings = { ...settings, ...partial };
       if (!settings.closeToTray) settings.startInTray = false;
       return settings as T;
     }
@@ -1545,176 +1524,6 @@ export async function handleBrowserCommand<T>(
       ];
       return tools as T;
     }
-    // 悬浮窗：浏览器模式返回样例余额，覆盖「正常 / 低余额 / 无限额 / 未知」四种展示。
-    case "get_all_sites_quota":
-      if (sites.length > 0) {
-        return sites
-          .filter((site) => site.enabled)
-          .map((site, index) => ({
-            siteId: site.id,
-            siteName: site.name,
-            enabled: true,
-            sortOrder: site.sortOrder ?? index,
-            quota: {
-              status: "available",
-              remainingUsd: 42.5,
-              usedUsd: 7.5,
-              totalUsd: 50,
-              unlimited: false,
-              unit: "USD",
-              expiresAt: null,
-              source: "token_usage",
-              endpoint: `${site.baseUrl}/v1/usage`,
-              fetchedAt: now(),
-              latencyMs: 12,
-              error: null,
-              windows: [],
-            },
-          })) as T;
-      }
-      return [
-        {
-          siteId: "s1",
-          siteName: "Relay A",
-          enabled: true,
-          sortOrder: 0,
-          quota: {
-            status: "available",
-            remainingUsd: 42.5,
-            usedUsd: 7.5,
-            totalUsd: 50,
-            unlimited: false,
-            unit: "usd",
-            expiresAt: null,
-            source: "token_usage",
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s2",
-          siteName: "Relay B",
-          enabled: true,
-          sortOrder: 1,
-          quota: {
-            status: "available",
-            remainingUsd: 1.25,
-            usedUsd: 8.75,
-            totalUsd: 10,
-            unlimited: false,
-            unit: "usd",
-            expiresAt: null,
-            source: "token_usage",
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s3",
-          siteName: "Unlimited C",
-          enabled: true,
-          sortOrder: 2,
-          quota: {
-            status: "available",
-            remainingUsd: null,
-            usedUsd: null,
-            totalUsd: null,
-            unlimited: true,
-            unit: null,
-            expiresAt: null,
-            source: null,
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 12,
-            error: null,
-            windows: [],
-          },
-        },
-        {
-          siteId: "s4",
-          siteName: "Unknown D",
-          enabled: false,
-          sortOrder: 3,
-          quota: null,
-        },
-        {
-          siteId: "s5",
-          siteName: "Failed E",
-          enabled: true,
-          sortOrder: 4,
-          quota: {
-            status: "error",
-            remainingUsd: null,
-            usedUsd: null,
-            totalUsd: null,
-            unlimited: false,
-            unit: null,
-            expiresAt: null,
-            source: null,
-            endpoint: null,
-            fetchedAt: 1,
-            latencyMs: 0,
-            error: "unauthorized: invalid api key",
-            windows: [],
-          },
-        },
-        {
-          siteId: "s6",
-          siteName: "Magicube F",
-          enabled: true,
-          sortOrder: 5,
-          quota: {
-            status: "available",
-            remainingUsd: 1000.5,
-            usedUsd: null,
-            totalUsd: 1200.75,
-            unlimited: false,
-            unit: "MAGICUBE",
-            expiresAt: null,
-            source: "magicube_balance",
-            endpoint: "https://modelscope.cn/openapi/v1/magicubes/balance",
-            fetchedAt: 1,
-            latencyMs: 11,
-            error: null,
-            windows: [],
-          },
-        },
-      ] as T;
-    case "refresh_site_quota": {
-      quotaProbeCallCount += 1;
-      const siteId = String(args?.siteId ?? "");
-      const site = sites.find((s) => s.id === siteId);
-      if (!site) throw { code: "not_found", message: "Site not found" };
-      return (await mockProbeQuota(site)) as T;
-    }
-    case "set_floating_window_collapsed": {
-      const collapsed = Boolean(args?.collapsed);
-      settings = {
-        ...settings,
-        floatingWindow: {
-          enabled: settings.floatingWindow?.enabled ?? true,
-          autoRefreshMinutes: settings.floatingWindow?.autoRefreshMinutes ?? 5,
-          positionX: settings.floatingWindow?.positionX ?? 100,
-          positionY: settings.floatingWindow?.positionY ?? 100,
-          collapsed,
-        },
-      };
-      return undefined as T;
-    }
-    case "toggle_floating_window":
-    case "show_floating_window_cmd":
-    case "hide_floating_window_cmd":
-    case "save_floating_window_position":
-    case "reset_floating_window_position":
-    case "set_floating_window_enabled":
-    case "set_floating_window_refresh_interval":
-      return undefined as T;
     case "get_app_paths": {
       const paths: AppPaths = {
         appDir: "~/.xiaobai-switch",

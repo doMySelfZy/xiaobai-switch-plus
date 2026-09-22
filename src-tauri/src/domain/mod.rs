@@ -642,49 +642,6 @@ pub struct AppSettings {
     /// Keep the main window hidden on launch (only meaningful with close_to_tray).
     #[serde(default)]
     pub start_in_tray: bool,
-    /// 悬浮窗配置
-    #[serde(default)]
-    pub floating_window: FloatingWindowSettings,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FloatingWindowSettings {
-    /// 是否启用悬浮窗
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// 自动刷新间隔（分钟）
-    #[serde(default = "default_floating_refresh_interval")]
-    pub auto_refresh_minutes: u32,
-    /// 窗口 X 坐标（None = 使用默认位置）
-    #[serde(default)]
-    pub position_x: Option<i32>,
-    /// 窗口 Y 坐标（None = 使用默认位置）
-    #[serde(default)]
-    pub position_y: Option<i32>,
-    /// 是否收起（true = 只显示图标，false = 显示完整列表）
-    #[serde(default)]
-    pub collapsed: bool,
-}
-
-impl Default for FloatingWindowSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            auto_refresh_minutes: default_floating_refresh_interval(),
-            position_x: None,
-            position_y: None,
-            collapsed: false,
-        }
-    }
-}
-
-pub fn default_floating_refresh_interval() -> u32 {
-    5
-}
-
-pub fn clamp_floating_refresh_interval(n: u32) -> u32 {
-    n.clamp(1, 60)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -937,20 +894,8 @@ impl Default for AppSettings {
             local_proxy_targets: Vec::new(),
             close_to_tray: true,
             start_in_tray: false,
-            floating_window: FloatingWindowSettings::default(),
         }
     }
-}
-
-/// 悬浮窗显示的站点余额摘要
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SiteQuotaSummary {
-    pub site_id: String,
-    pub site_name: String,
-    pub quota: Option<SiteQuota>,
-    pub enabled: bool,
-    pub sort_order: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

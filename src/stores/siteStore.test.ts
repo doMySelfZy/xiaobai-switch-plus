@@ -782,7 +782,7 @@ describe("siteStore fetchModels", () => {
     useSiteStore.getState().clearRefreshingSiteId("manual-extra");
   });
 
-  it("refreshes a single quota through refresh_site_quota and notifies the floating window", async () => {
+  it("refreshes a single quota through probe_site_quota", async () => {
     const site = await useSiteStore.getState().createSite({
       name: "Solo",
       baseUrl: "https://solo.example.com",

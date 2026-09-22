@@ -64,8 +64,7 @@ pub async fn probe_site_quota(state: State<'_, AppState>, site_id: String) -> Ap
 
 /// 探测单个站点的额度。
 ///
-/// 从命令层抽出来是为了让悬浮窗能并发刷新所有站点（`State` 只能从命令参数拿到，
-/// 没法在 `join_all` 里传递）。
+/// 从命令层抽出来，让内部调用方（如批量刷新）能直接拿到 `&AppState` 复用同一份逻辑。
 pub(crate) async fn probe_quota_for(state: &AppState, site_id: &str) -> AppResult<SiteQuota> {
     let (site, api_key, newapi, settings) = state.db.with_conn(|c| {
         let site = repo::site::get_site(c, site_id)?;

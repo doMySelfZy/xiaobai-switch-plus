@@ -1,6 +1,5 @@
 pub mod agent_update;
 pub mod apply;
-pub mod floating;
 pub mod mcp;
 pub use mcp::*;
 pub mod mcp_update;
@@ -20,7 +19,6 @@ pub mod window;
 
 pub use agent_update::*;
 pub use apply::*;
-pub use floating::*;
 pub use mcp_update::*;
 pub use models::*;
 pub use net::*;

@@ -50,7 +50,7 @@ describe("BackupQuickPopover", () => {
   });
 
   it("localizes the fingerprint algorithm mismatch instead of showing the backend text", async () => {
-    // 悬浮窗是用户实际会点到的另一处同步入口：算法不兼容同样必须走 i18n，
+    // 快捷备份气泡也是用户实际会点到的同步入口：算法不兼容同样必须走 i18n，
     // 否则这里会漏出面向诊断的英文原文（AC9 说的是"设置界面"，但用户看到的是哪里就修哪里）。
     seedWebDavMock({ baseUrl: "https://dav.example.com/", username: "alice", hasPassword: true }, []);
     const realInvoke = invokeMod.invoke;

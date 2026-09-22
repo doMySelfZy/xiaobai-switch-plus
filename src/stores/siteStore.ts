@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke, isTauri } from "@/lib/invoke";
+import { invoke } from "@/lib/invoke";
 import type {
   AddSiteApiKeyInput,
   CreateSiteInput,
@@ -49,16 +49,6 @@ export function resetQuotaInflight() {
   modelInflight.clear();
   modelRequestVersion.clear();
   refreshAllInflight = null;
-}
-
-async function emitSitesRefreshFinished() {
-  if (!isTauri()) return;
-  try {
-    const { emit } = await import("@tauri-apps/api/event");
-    await emit("sites-refresh-finished");
-  } catch {
-    // Browser mode and older runtimes may not expose the event bridge.
-  }
 }
 
 interface SiteState {
@@ -118,9 +108,7 @@ interface SiteState {
   refreshSiteModelsAndQuota: (siteId: string) => Promise<RefreshSiteResult>;
   /**
    * 单个站点的余额单刷，供详情页余额行手动刷新使用。
-   * 与 `probeQuota` 不同：走 `refresh_site_quota`（写后端悬浮窗余额缓存），
-   * 完成后 emit `sites-refresh-finished` 通知悬浮窗重读，与统一刷新同一口径。
-   * 指示器同样走 `refreshingSiteIds`（累加进入、finally 摘除），失败也不卡住。
+   * 指示器走 `refreshingSiteIds`（累加进入、finally 摘除），失败也不卡住。
    */
   refreshSiteQuota: (siteId: string) => Promise<SiteQuota>;
   /**
@@ -216,8 +204,6 @@ type SiteStoreGet = () => SiteState;
 /**
  * 单个站点的一轮刷新 = 模型 + 余额两件事，在同一个 worker 里等齐。
  *
- * 余额走 `refresh_site_quota` 而不是 `probe_site_quota`：前者顺带写后端余额缓存，
- * 悬浮窗只读那份缓存（跨 webview 拿不到这里的 zustand 状态）。
  * 指示器摘除（含最短露出）统一收敛在这里，调用方只负责把站点加进
  * `refreshingSiteIds`；摘除放在 `finally`，失败也不会卡住。
  */
@@ -237,7 +223,7 @@ async function refreshOneSite(
           (result) => ({ modelCount: result.models.length, error: null }),
           (error) => ({ modelCount: 0, error: errorMessage(error) }),
         ),
-      invoke<SiteQuota>("refresh_site_quota", { siteId: id }).then(
+      invoke<SiteQuota>("probe_site_quota", { siteId: id }).then(
         (value) => ({ value, error: null }),
         (error) => ({ value: null, error: errorMessage(error) }),
       ),
@@ -645,7 +631,6 @@ export const useSiteStore = create<SiteState>((set, get) => ({
           successCount,
           failureCount: sites.length - successCount,
         } satisfies RefreshAllSitesResult;
-        await emitSitesRefreshFinished();
         return result;
       } finally {
         // worker 的 finally 已逐站摘除，这里只做兜底：本轮还有残留才清掉，
@@ -678,8 +663,6 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     }));
     try {
       const result = await refreshOneSite(get, set, siteId, apiKeyId, quotaKey);
-      // 单站余额同样写进了后端缓存，通知悬浮窗重读。
-      await emitSitesRefreshFinished();
       return result;
     } finally {
       // refreshOneSite 的 finally 已摘除一次，这里再保一次底：失败也必须灭灯。
@@ -722,20 +705,13 @@ export const useSiteStore = create<SiteState>((set, get) => ({
       return quota;
     };
     try {
-      // 余额单刷必须走 refresh_site_quota（写后端悬浮窗余额缓存），不能用 probe：
-      // probe 只回给调用方，悬浮窗会静默读到旧值（见 state-management.md）。
-      // 刻意不复用 quotaInflight：那是 probe 的去重池，复用会让单刷 join 到一次
-      // 不写缓存的 probe 请求上，同样读到旧值。
-      const quota = await invoke<SiteQuota>("refresh_site_quota", { siteId });
-      const stored = storeIfCurrent(quota);
-      await emitSitesRefreshFinished();
-      return stored;
+      // 刻意不复用 quotaInflight：那是 probe 的去重池，单刷要的是一次全新的探测，
+      // 复用会让它 join 到别处正在跑的请求上、读到那一轮的旧结果。
+      const quota = await invoke<SiteQuota>("probe_site_quota", { siteId });
+      return storeIfCurrent(quota);
     } catch (e) {
-      // 命令 reject 也要留下尝试记录并通知悬浮窗（后端失败时同样写了带 error 的缓存），
-      // 调用方按 probeQuota 的口径拿到 error 尝试而不是异常。
-      const attempt = storeIfCurrent(errorQuotaAttempt(errorMessage(e)));
-      await emitSitesRefreshFinished();
-      return attempt;
+      // 命令 reject 也要留下尝试记录，调用方按 probeQuota 的口径拿到 error 尝试而不是异常。
+      return storeIfCurrent(errorQuotaAttempt(errorMessage(e)));
     } finally {
       const elapsed = Date.now() - startTime;
       if (elapsed < MIN_REFRESH_INDICATOR_MS) {
