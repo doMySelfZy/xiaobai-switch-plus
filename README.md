@@ -190,7 +190,7 @@ pnpm tauri build
 
 - **AGENTS.md**：Agent 与自动化约束（开发规范）
 - **CHANGELOG.md**：版本变更记录
-- **.zcode/tasks/**：Trellis 任务归档（设计文档、测试用例）
+- **.trellis/tasks/**：Trellis 任务归档（设计文档、测试用例）
 
 ---
 

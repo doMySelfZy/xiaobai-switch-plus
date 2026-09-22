@@ -190,7 +190,7 @@ pnpm tauri build
 
 - **AGENTS.md**: Agent and automation constraints (development guidelines)
 - **CHANGELOG.md**: Version change log
-- **.zcode/tasks/**: Trellis task archives (design docs, test cases)
+- **.trellis/tasks/**: Trellis task archives (design docs, test cases)
 
 ---
 
