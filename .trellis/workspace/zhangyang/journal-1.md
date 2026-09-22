@@ -651,3 +651,25 @@ MCP页面去页签改单列表，逐客户端四开关即时应用/移除，挂�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: MCP 纳管即接管
+<!-- trellis-session: v=2 fp=9033cdd437c0b5ef -->
+
+**Date**: 2026-09-22
+**Task**: MCP 纳管即接管
+**Branch**: `feat/mcp-adopt-takeover`
+
+### Summary
+
+把 MCP 接管从应用时提前到纳管时：import_scanned_mcp 入库后立即对涉及客户端并集调 apply_to_targets 写盘接管（删等价手工条目、写 xiaobai_、记 applied_targets），修复纳管后删除条目仍回流未纳管列表的 bug。保留单记录/并集/去重标注；McpImportResult 加 apply 回传接管结果，前端提示接管失败客户端；新增 tempdir 端到端用例(602)+前端接管失败提示用例(426)；AGENTS.md 契约改写。trellis-check PASS 后补齐其指出的两处覆盖缺口。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7f06f2c` | feat(mcp): 纳管即接管，删除可清干净不再回流未纳管 |
+
+### Status
+
+[OK] **Completed**
