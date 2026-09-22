@@ -1,6 +1,6 @@
 [package]
 name = "xiaobai-switch-plus"
-version = "0.1.6"
+version = "0.1.7"
 description = "Site-driven Claude Code, Codex & Pi config switcher (fork of Licoy's XiaoBaiSwitch)"
 authors = ["Licoy"]
 license = "MIT"
