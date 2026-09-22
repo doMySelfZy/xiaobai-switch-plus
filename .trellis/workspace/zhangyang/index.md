@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
-- **Last Active**: 2026-09-21
+- **Total Sessions**: 23
+- **Last Active**: 2026-09-22
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~631 | Active |
+| `journal-1.md` | ~653 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-09-22 | 删除悬浮窗功能 | `04a9936` | `feat/site-add-presets` |
 | 22 | 2026-09-21 | 站点列表额度空白兜底 | `d855d6f` | `feat/site-add-presets` |
 | 21 | 2026-09-21 | MCP统一单列表改版+纳管关联修复 | `bea8d8a` | `feat/site-add-presets` |
 | 20 | 2026-09-20 | 本地NSIS安装包验证收尾归档 | `54aa912` | `feat/site-add-presets` |

@@ -629,3 +629,25 @@ MCP页面去页签改单列表，逐客户端四开关即时应用/移除，挂�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 23: 删除悬浮窗功能
+<!-- trellis-session: v=2 fp=067c169f4fdd9d4c -->
+
+**Date**: 2026-09-22
+**Task**: 删除悬浮窗功能
+**Branch**: `feat/site-add-presets`
+
+### Summary
+
+彻底移除悬浮窗特性：删 floating_window.rs/commands/floating.rs/capability/前端组件与入口/vite多入口/设置分组/类型/mock/跨窗口事件链与遗留原型；单站余额刷新改走既有 probe_site_quota，主窗口定时刷新硬编码 2 分钟。cargo test 598 passed、pnpm typecheck 通过、pnpm test:run 424 passed（2 个 updater 套件为既有无关失败）。归档 09-22-remove-floating-window 与被推翻的 09-21-floating-window-refactor。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `04a9936` | feat(floating): 彻底删除悬浮窗功能 |
+
+### Status
+
+[OK] **Completed**
