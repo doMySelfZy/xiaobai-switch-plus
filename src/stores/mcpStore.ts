@@ -8,6 +8,7 @@ import type {
   McpServer,
   McpServerInput,
   McpServerSummary,
+  McpTargetDrift,
   RegistrySearchResult,
   ScanOutcome,
 } from "@/types/mcp";
@@ -16,7 +17,11 @@ import type { TargetKind } from "@/types/domain";
 interface McpState {
   servers: McpServerSummary[];
   loading: boolean;
+  /** 各目标客户端相对 DB 期望态的漂移计划（不含 Prime）。 */
+  drift: McpTargetDrift[];
   loadServers: () => Promise<void>;
+  /** 只读比对各客户端配置与 DB 期望态，刷新漂移标记。 */
+  loadDrift: () => Promise<void>;
   getServer: (id: string) => Promise<McpServer>;
   saveServer: (input: McpServerInput) => Promise<McpSaveResult>;
   deleteServer: (id: string) => Promise<McpApplyResult>;
@@ -38,6 +43,7 @@ interface McpState {
 export const useMcpStore = create<McpState>((set) => ({
   servers: [],
   loading: false,
+  drift: [],
 
   loadServers: async () => {
     set({ loading: true });
@@ -47,6 +53,16 @@ export const useMcpStore = create<McpState>((set) => ({
     } catch (error) {
       console.error("Failed to load MCP servers:", error);
       set({ loading: false });
+    }
+  },
+
+  loadDrift: async () => {
+    try {
+      const drift = await invoke<McpTargetDrift[]>("mcp_drift_status");
+      set({ drift });
+    } catch (error) {
+      console.error("Failed to load MCP drift status:", error);
+      set({ drift: [] });
     }
   },
 

@@ -543,7 +543,6 @@
     "updating": "正在更新…",
     "autoCheckUpdate": "自动检查更新",
     "updateCheckInterval": "自动检查间隔",
-    "minutes": "分钟",
     "linksTitle": "开源与链接",
     "githubRepo": "GitHub 仓库",
     "githubIssues": "问题反馈",
@@ -764,6 +763,7 @@
     "existingScan": "扫描",
     "existingScanning": "扫描中…",
     "existingRescan": "重新扫描",
+    "rescanDone": "重新扫描完成",
     "existingEmpty": "没有发现其它客户端里手工配置的 MCP",
     "existingImport": "纳管",
     "existingImportAll": "全部纳管（{{count}}）",
@@ -776,94 +776,60 @@
     "existingImportTakeoverFailed": "以下客户端接管失败，原条目已原样保留（可能在扫描后被改动）：{{targets}}",
     "existingWarning": "{{target}} 读取失败：{{message}}",
     "existingNote": "纳管会把已有的 API Key 等配置加密保存到本应用数据库（只存在你自己的电脑和 WebDAV 里）。不会改动客户端里的原配置。",
-
     "tabMine": "我的 MCP（{{count}}）",
-
     "tabRegistry": "发现安装",
-
     "tabScan": "扫描纳管（{{count}}）",
-
     "mineSearchPlaceholder": "搜索 MCP 名称…",
-
     "allTargets": "全部目标",
-
     "onlyUpdates": "只看可更新",
-
     "mineNoResults": "没有匹配的 MCP 服务",
-
     "applyPanelDesc": "勾选要写入的客户端。改名、禁用、删除后的清理只移除 xiaobai_ 开头的托管条目，你自己的配置不会被动。",
-
     "applyPreview": "将把 {{count}} 个启用的服务写入：{{targets}}",
-
     "applyPreviewEmpty": "当前没有可应用的启用服务",
-
     "applyCleanupNote": "未勾选目标下的旧托管条目（xiaobai_ 前缀）将被清理，自建条目保留",
-
     "notAppliedTo": "未覆盖：{{targets}}",
-
     "enabledToggle": "启用 {{name}}",
-
     "scanConflict": "冲突·将跳过",
-
     "scanConflictHint": "客户端里的内容与库内同名条目不一致：纳管会撞上重名，应用会跳过该目标。请改名或对齐后再纳管。",
-
     "scanAdoptable": "等价·将接管",
-
     "scanAdoptHint": "与库内条目等价，下次应用到{{target}}时删除未托管条目并写入 xiaobai_{{name}}。",
-
     "existingImportConfirmTitle": "确认纳管（{{count}}）",
-
     "existingImportConfirmSkipped": "跳过冲突条目（{{names}}）：内容与库内同名条目不一致。",
-
     "existingImportConfirmNote": "密钥由后端直接读盘并加密入库，不经过前端。",
-
     "existingAlreadyImported": "其中 {{count}} 个已在库中，未建重复行。",
-
     "registryNoSecrets": "免密钥·点即装",
-
     "registryNeedsSecrets": "需填 {{count}} 个密钥",
-
     "registryTargetPickerTitle": "选择应用目标",
-
     "registryTargetPickerDesc": "「{{name}}」无需填写密钥，选择要安装到的客户端后直接安装。",
-
     "addSourceManual": "手动填写",
-
     "addSourceRegistry": "从仓库安装",
-
     "clientToggle": "把「{{name}}」应用到 {{target}}",
-
     "conflictResolve": "该客户端里已有同名但不同的配置，点击处理",
-
     "conflictOn": "{{target}} 存在冲突",
-
     "conflictBanner": "{{target}} 里已有一份手动配置的「{{name}}」且内容不同，应用前请先对比处理。",
-
     "conflictCompare": "对比",
-
     "conflictTitle": "解决同名冲突 · {{name}}",
-
     "conflictTitleBare": "解决同名冲突",
-
     "conflictDesc": "{{target}} 里已有一份同名 MCP，且与库内记录不同。此处只展示键名，密钥值永不离开后端。",
-
     "conflictMine": "库内（本应用）",
-
     "conflictTheirs": "客户端（{{target}}）",
-
     "conflictAdoptTheirs": "用客户端的（反向入库）",
-
     "conflictSkip": "该客户端先跳过",
-
     "unmanagedSectionTitle": "客户端里发现·未纳管（{{count}}）",
-
     "unmanagedSectionDesc": "你直接在某个客户端里配的 MCP。纳管后收编进统一清单，在这里一起管理。",
-
     "unmanagedIn": "未纳管·在 {{target}}",
-
     "adopt": "纳管",
-
-    "unmanagedHint": "纳管会读取其配置（密钥值留在后端）并收编进统一清单。"
+    "unmanagedHint": "纳管会读取其配置（密钥值留在后端）并收编进统一清单。",
+    "sidebarHint": "按 Agent 分别管理",
+    "driftSidebarHint": "该客户端与应用记录不一致，需重新应用",
+    "absolutePathTag": "跨机可能失效",
+    "absolutePathHint": "启动命令是绝对路径，换一台机器路径可能不存在，跨机同步后可能无法启动。",
+    "applyTo": "应用到 {{target}}",
+    "driftBannerTitle": "需重新应用",
+    "driftBannerDetail": "该客户端配置与应用记录不一致：待写入 {{write}} 项，待清理孤儿 {{clean}} 项。",
+    "driftBannerConflicts": "同名冲突（不会自动覆盖）：{{names}}",
+    "reapply": "重新应用",
+    "reapplySuccess": "已重新写入该客户端"
   },
   "rules": {
     "targetClaudeCode": "Claude Code",
@@ -941,34 +907,6 @@
     "targetPi": "Pi",
     "targetPrime": "Prime",
     "stopRestored": "已停止代理，并把接管目标改回直连。"
-  },
-  "rules": {
-    "targetClaudeCode": "Claude Code",
-    "targetCodex": "Codex",
-    "targetPi": "Pi",
-    "targetPrime": "Prime",
-    "title": "全局约束",
-    "subtitle": "一次填写，自动写入所选 Agent 的用户级指令文件，对之后的所有会话生效。",
-    "contentTitle": "约束内容（Markdown）",
-    "contentHint": "支持 Markdown 语法",
-    "bodyLabel": "约束正文",
-    "placeholder": "# 全局约束\n\n- 始终用中文回答\n- 修改代码后先跑测试再声称完成\n- 不要自动执行 git push",
-    "targetsTitle": "生效目标",
-    "emptyMeansClear": "正文为空或未勾选目标时，会移除各文件里由本应用写入的内容（你自己写的内容不动）。",
-    "saveAppliesImmediately": "保存后立即写入所勾选的目标。",
-    "save": "保存并应用",
-    "saveFailed": "保存失败",
-    "appliedAt": "最近应用：{{time}}",
-    "resultTitle": "写入结果",
-    "resultWritten": "已写入",
-    "resultUnchanged": "内容未变，跳过写入",
-    "resultFailed": "失败：{{message}}",
-    "pathsTitle": "各目标的文件落点",
-    "pathExists": "已存在",
-    "pathMissing": "尚未创建",
-    "codexShadowTitle": "Codex 的内容会被遮蔽",
-    "codexShadowDesc": "检测到 {{path}}。Codex 只读取这个 override 文件，本应用写入的 AGENTS.md 不会生效；请自行决定是否移除它。",
-    "plaintextNotice": "约束正文会以明文写入上述文件，任何能读取这些文件的程序都能看到内容；各客户端在下次启动时读取（Pi/Prime 可用 /reload 立即生效）。"
   },
   "common": {
     "loading": "加载中…",
@@ -1005,54 +943,5 @@
     "master_key_missing": "无法解密已存密钥：master.key 丢失，请从备份恢复或清空数据目录",
     "invalid_config": "目标配置文件无效",
     "internal": "内部错误"
-  },
-  "proxy": {
-    "title": "本地代理",
-    "subtitle": "让客户端先把请求发到本机，由代理按站点补请求头后再转发到真实上游。",
-    "groupService": "代理服务",
-    "groupTakeover": "目标接管",
-    "groupLog": "请求日志",
-    "running": "运行中",
-    "stopped": "已停止",
-    "start": "启动代理",
-    "stop": "停止代理",
-    "address": "监听地址",
-    "pathToken": "路径口令",
-    "pathTokenHint": "口令只用于拼装接管地址；界面上始终以截断形式展示。",
-    "uptime": "运行时长",
-    "counters": "请求统计",
-    "counterValue": "共 {{total}} · 成功 {{success}} · 失败 {{failed}} · 活跃连接 {{active}}",
-    "port": "监听端口",
-    "portHint": "改端口后需要重启代理才会生效。",
-    "portSaved": "端口已保存；运行中会自动重启监听并重写接管地址。",
-    "lastError": "最近错误",
-    "stoppedHint": "代理未运行。启动后，已接管的目标才能正常发请求。",
-    "takeoverHint": "接管会改写客户端配置",
-    "takeoverHintDetail": "开启后，该目标的 Base URL 会指向本机代理；关闭时自动写回站点真实地址。应用退出时会自动恢复直连。",
-    "takeoverEnabled": "已开启 {{target}} 接管",
-    "takeoverDisabled": "已关闭 {{target}} 接管",
-    "takeoverNeedsRunning": "先启动代理，才能开启接管。",
-    "boundSite": "绑定站点：{{site}}",
-    "noBoundSite": "尚未绑定站点",
-    "disableAll": "全部恢复直连",
-    "disableAllTitle": "恢复全部目标为直连？",
-    "disableAllBody": "所有已接管目标会写回站点真实地址，客户端将不再经过本地代理。",
-    "disableAllOk": "恢复直连",
-    "refresh": "刷新",
-    "clear": "清空",
-    "logPrivacy": "日志只记录方法、路径、状态与耗时；不记录请求头、请求体或密钥，路径口令也不会写入。",
-    "noRequests": "暂无请求",
-    "colTime": "时间",
-    "colTarget": "目标",
-    "colMethod": "方法",
-    "colPath": "路径",
-    "colStatus": "状态",
-    "colDuration": "耗时",
-    "colError": "错误",
-    "targetClaudeCode": "Claude Code",
-    "targetCodex": "Codex",
-    "targetPi": "Pi",
-    "targetPrime": "Prime",
-    "stopRestored": "已停止代理，并把接管目标改回直连。"
   }
 }

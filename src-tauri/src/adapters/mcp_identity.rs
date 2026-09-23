@@ -58,6 +58,28 @@ pub fn normalize_command(command: &str) -> String {
     base
 }
 
+/// stdio 记录的启动命令是否为绝对路径（跨机通常失效，界面据此预警）。
+///
+/// 刻意与宿主 OS 无关地识别三种绝对形态：Unix `/foo`、Windows 盘符 `C:\foo` / `C:/foo`、
+/// UNC `\\server\share`。只看 stdio 的 `command` 首字段，`npx` 这类可执行名不算。
+pub fn command_is_absolute(kind: McpKind, config: &Value) -> bool {
+    if kind != McpKind::Stdio {
+        return false;
+    }
+    let Some(command) = config.get("command").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    let command = command.trim();
+    if command.starts_with('/') || command.starts_with('\\') {
+        return true;
+    }
+    let bytes = command.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
 /// 比对用的 config 形态：剔除私有字段 + 归一化 command，其余原样。
 fn comparable_config(config: &Value) -> Value {
     let mut map = config.as_object().cloned().unwrap_or_default();
@@ -269,5 +291,31 @@ mod tests {
             CLIENT_PRIVATE_FIELDS,
             ["type", "transport", "enabled", "timeoutMs"]
         );
+    }
+
+    #[test]
+    fn absolute_command_detects_cross_platform_paths() {
+        let abs = |cmd: &str| {
+            command_is_absolute(McpKind::Stdio, &json!({ "command": cmd }))
+        };
+        assert!(abs("/usr/local/bin/mcp"), "unix 绝对路径");
+        assert!(abs("C:\\tools\\mcp.exe"), "windows 反斜杠");
+        assert!(abs("D:/tools/mcp"), "windows 正斜杠");
+        assert!(abs("\\\\server\\share\\mcp"), "UNC 路径");
+        assert!(!abs("npx"), "PATH 命令");
+        assert!(!abs("mcp-demo"), "裸命令");
+        assert!(!abs("./local"), "相对路径不算");
+    }
+
+    #[test]
+    fn absolute_command_only_applies_to_stdio() {
+        let cfg = json!({ "command": "/usr/bin/mcp" });
+        assert!(!command_is_absolute(McpKind::Sse, &cfg));
+        assert!(!command_is_absolute(McpKind::Http, &cfg));
+    }
+
+    #[test]
+    fn absolute_command_false_without_command() {
+        assert!(!command_is_absolute(McpKind::Stdio, &json!({ "url": "/x" })));
     }
 }

@@ -34,6 +34,9 @@ pub struct McpServerSummary {
  pub latest_version: Option<String>,
  #[serde(default)]
  pub last_update_check_at: Option<i64>,
+ /// 派生字段（非 DB 列）：stdio 命令首段是绝对路径，跨机可能失效，界面据此预警。
+ #[serde(default)]
+ pub absolute_command: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

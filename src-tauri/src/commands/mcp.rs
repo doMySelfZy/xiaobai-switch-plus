@@ -235,6 +235,68 @@ pub struct McpApplyResult {
     pub applied_at: i64,
 }
 
+/// 单个目标的漂移状态：库内现状与客户端已应用内容是否一致。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpTargetDrift {
+    pub target: TargetKind,
+    /// 需写入 / 内容有变化的托管条目数。
+    pub to_write: usize,
+    /// 应用时会被清理的失效托管条目（孤儿）数。
+    pub to_clean: usize,
+    /// 存在同名未托管条目、内容不一致会导致应用报错跳过的服务名。
+    pub conflicts: Vec<String>,
+    /// `to_write>0 || to_clean>0 || 有冲突`。
+    pub drift: bool,
+    /// 该目标配置文件形状非法等无法比对时的错误信息（此时其余计数为 0）。
+    pub error: Option<String>,
+}
+
+/// 逐目标（Claude / Codex / Pi，排除 Prime）计算漂移，用于「需重新应用」提示。
+/// 只读：不写盘、不备份、不加锁。某个目标读失败只影响该目标的 `error` 字段。
+#[tauri::command(async)]
+pub fn mcp_drift_status(state: State<'_, AppState>) -> AppResult<Vec<McpTargetDrift>> {
+    let settings = state.db.with_conn(repo::settings::get_settings)?;
+    let servers = state.db.with_conn(|conn| repo::mcp::list_full(conn, &state.crypto))?;
+
+    let plans: [(TargetKind, AppResult<mcp_adapters::McpMergePlan>); 3] = [
+        (
+            TargetKind::ClaudeCode,
+            mcp_adapters::plan_claude(&servers, settings.claude_home_override.as_deref()),
+        ),
+        (
+            TargetKind::Codex,
+            mcp_adapters::plan_codex(&servers, settings.codex_home_override.as_deref()),
+        ),
+        (
+            TargetKind::Pi,
+            mcp_adapters::plan_pi(&servers, settings.pi_agent_dir_override.as_deref()),
+        ),
+    ];
+
+    Ok(plans
+        .into_iter()
+        .map(|(target, plan)| match plan {
+            Ok(plan) => McpTargetDrift {
+                target,
+                to_write: plan.to_write,
+                to_clean: plan.to_clean,
+                drift: plan.drift(),
+                conflicts: plan.conflicts,
+                error: None,
+            },
+            Err(error) => McpTargetDrift {
+                target,
+                to_write: 0,
+                to_clean: 0,
+                conflicts: Vec::new(),
+                drift: false,
+                error: Some(error.to_string()),
+            },
+        })
+        .collect())
+}
+
 /// 见 `save_mcp_server`：一次要把多个客户端配置文件重写并落盘。
 #[tauri::command(async)]
 pub fn apply_mcp_servers(
@@ -597,6 +659,10 @@ fn summarize_server(server: &McpServer) -> McpServerSummary {
         current_version: server.current_version.clone(),
         latest_version: server.latest_version.clone(),
         last_update_check_at: server.last_update_check_at,
+        absolute_command: crate::adapters::mcp_identity::command_is_absolute(
+            server.kind,
+            &server.config,
+        ),
     }
 }
 
@@ -1397,6 +1463,7 @@ mod tests {
             current_version: None,
             latest_version: None,
             last_update_check_at: None,
+            absolute_command: false,
         }
     }
 

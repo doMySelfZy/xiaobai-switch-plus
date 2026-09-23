@@ -158,6 +158,7 @@ pub fn run() {
             commands::save_mcp_server,
             commands::delete_mcp_server,
             commands::apply_mcp_servers,
+            commands::mcp_drift_status,
             commands::mcp_target_paths,
             commands::search_mcp_registry,
             commands::discover_mcp_registry,

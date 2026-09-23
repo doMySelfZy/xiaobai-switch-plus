@@ -543,7 +543,6 @@
     "updating": "Updating…",
     "autoCheckUpdate": "Automatically check for updates",
     "updateCheckInterval": "Check interval",
-    "minutes": "min",
     "linksTitle": "Open source",
     "githubRepo": "GitHub repository",
     "githubIssues": "Issues",
@@ -764,6 +763,7 @@
     "existingScan": "Scan",
     "existingScanning": "Scanning…",
     "existingRescan": "Rescan",
+    "rescanDone": "Rescan complete",
     "existingEmpty": "No hand-configured MCP servers found in the other clients",
     "existingImport": "Import",
     "existingImportAll": "Import all ({{count}})",
@@ -776,94 +776,60 @@
     "existingImportTakeoverFailed": "Takeover failed for these clients; their original entries were left untouched (they may have changed since the scan): {{targets}}",
     "existingWarning": "Could not read {{target}}: {{message}}",
     "existingNote": "Importing stores existing API keys and config encrypted in this app's database (only on your own machine and your WebDAV). The original client config is left untouched.",
-
     "tabMine": "My MCP ({{count}})",
-
     "tabRegistry": "Discover",
-
     "tabScan": "Scan & Adopt ({{count}})",
-
     "mineSearchPlaceholder": "Search MCP by name…",
-
     "allTargets": "All targets",
-
     "onlyUpdates": "Show updatable only",
-
     "mineNoResults": "No matching MCP services",
-
     "applyPanelDesc": "Select the clients to write to. Cleanup after rename, disable, or delete only removes managed entries with the xiaobai_ prefix; your own entries are never touched.",
-
     "applyPreview": "Will write {{count}} enabled service(s) to: {{targets}}",
-
     "applyPreviewEmpty": "No enabled services to apply",
-
     "applyCleanupNote": "Old managed entries (xiaobai_ prefix) under unchecked targets will be cleaned up; your own entries are kept",
-
     "notAppliedTo": "Not covered: {{targets}}",
-
     "enabledToggle": "Toggle {{name}}",
-
     "scanConflict": "Conflict · skipped",
-
     "scanConflictHint": "The client entry differs from the same-named library entry: importing would hit the name check and applying would skip the target. Rename or align it first.",
-
     "scanAdoptable": "Equivalent · will adopt",
-
     "scanAdoptHint": "Equivalent to the library entry; the next apply to {{target}} removes the unmanaged entry and writes xiaobai_{{name}}.",
-
     "existingImportConfirmTitle": "Confirm import ({{count}})",
-
     "existingImportConfirmSkipped": "Skipped conflicting entries ({{names}}): content differs from the same-named library entry.",
-
     "existingImportConfirmNote": "Secrets are read from disk and encrypted by the backend; they never pass through the frontend.",
-
     "existingAlreadyImported": "{{count}} already in the library, no duplicates created.",
-
     "registryNoSecrets": "No secrets · one-click install",
-
     "registryNeedsSecrets": "Needs {{count}} secret(s)",
-
     "registryTargetPickerTitle": "Choose targets",
-
     "registryTargetPickerDesc": "{{name}} needs no secrets. Pick the clients to install to.",
-
     "addSourceManual": "Fill in manually",
-
     "addSourceRegistry": "Install from registry",
-
     "clientToggle": "Apply {{name}} to {{target}}",
-
     "conflictResolve": "A different config with the same name exists in this client — click to resolve",
-
     "conflictOn": "Conflict in {{target}}",
-
     "conflictBanner": "{{target}} already has a different \"{{name}}\" configured by hand. Compare and decide before applying.",
-
     "conflictCompare": "Compare",
-
     "conflictTitle": "Resolve conflict · {{name}}",
-
     "conflictTitleBare": "Resolve conflict",
-
     "conflictDesc": "{{target}} already has a same-named MCP that differs from the library entry. Only key names are shown — secret values never leave the backend.",
-
     "conflictMine": "Library (this app)",
-
     "conflictTheirs": "Client ({{target}})",
-
     "conflictAdoptTheirs": "Use the client's (import into library)",
-
     "conflictSkip": "Skip this client",
-
     "unmanagedSectionTitle": "Found in clients · not managed ({{count}})",
-
     "unmanagedSectionDesc": "MCPs you configured directly in a client. Adopt them into the unified list to manage them here.",
-
     "unmanagedIn": "Not managed · in {{target}}",
-
     "adopt": "Adopt",
-
-    "unmanagedHint": "Adopting reads the config (secret values stay in the backend) and brings it into the unified list."
+    "unmanagedHint": "Adopting reads the config (secret values stay in the backend) and brings it into the unified list.",
+    "sidebarHint": "Manage per agent",
+    "driftSidebarHint": "This client differs from the app's record; re-apply needed",
+    "absolutePathTag": "May break across machines",
+    "absolutePathHint": "The launch command is an absolute path; it may not exist on another machine and could fail to start after cross-machine sync.",
+    "applyTo": "Apply to {{target}}",
+    "driftBannerTitle": "Re-apply needed",
+    "driftBannerDetail": "This client's config differs from the app's record: {{write}} to write, {{clean}} orphan(s) to clean.",
+    "driftBannerConflicts": "Same-name conflicts (never auto-overwritten): {{names}}",
+    "reapply": "Re-apply",
+    "reapplySuccess": "Re-applied to this client"
   },
   "rules": {
     "targetClaudeCode": "Claude Code",
@@ -941,34 +907,6 @@
     "targetPi": "Pi",
     "targetPrime": "Prime",
     "stopRestored": "Proxy stopped and taken-over targets were restored to direct connections."
-  },
-  "rules": {
-    "targetClaudeCode": "Claude Code",
-    "targetCodex": "Codex",
-    "targetPi": "Pi",
-    "targetPrime": "Prime",
-    "title": "Global Rules",
-    "subtitle": "Write once, and it is pushed to each selected agent's user-level instruction file for all future sessions.",
-    "contentTitle": "Rules content (Markdown)",
-    "contentHint": "Markdown supported",
-    "bodyLabel": "Rules body",
-    "placeholder": "# Global rules\n\n- Always answer in Chinese\n- Run the tests before claiming a change is done\n- Never run git push automatically",
-    "targetsTitle": "Apply to",
-    "emptyMeansClear": "An empty body or no selected target removes what this app wrote from each file; your own content is left untouched.",
-    "saveAppliesImmediately": "Saving writes to the selected targets immediately.",
-    "save": "Save and apply",
-    "saveFailed": "Save failed",
-    "appliedAt": "Last applied: {{time}}",
-    "resultTitle": "Write results",
-    "resultWritten": "Written",
-    "resultUnchanged": "Unchanged, skipped",
-    "resultFailed": "Failed: {{message}}",
-    "pathsTitle": "Target file locations",
-    "pathExists": "exists",
-    "pathMissing": "not created yet",
-    "codexShadowTitle": "Codex content will be shadowed",
-    "codexShadowDesc": "Found {{path}}. Codex only reads this override file, so the AGENTS.md written by this app will not take effect. Decide yourself whether to remove it.",
-    "plaintextNotice": "The rules are written to those files in plain text, readable by any program that can open them. Each client reads them at startup (Pi/Prime can reload with /reload)."
   },
   "common": {
     "loading": "Loading…",
@@ -1005,54 +943,5 @@
     "master_key_missing": "Cannot decrypt keys: master.key missing. Restore backup or clear data dir.",
     "invalid_config": "Invalid target config file",
     "internal": "Internal error"
-  },
-  "proxy": {
-    "title": "Local proxy",
-    "subtitle": "Route client requests through this machine so the proxy can add site-level headers before forwarding upstream.",
-    "groupService": "Proxy service",
-    "groupTakeover": "Target takeover",
-    "groupLog": "Request log",
-    "running": "Running",
-    "stopped": "Stopped",
-    "start": "Start proxy",
-    "stop": "Stop proxy",
-    "address": "Listen address",
-    "pathToken": "Path token",
-    "pathTokenHint": "The token only exists to build takeover URLs and is always shown truncated.",
-    "uptime": "Uptime",
-    "counters": "Requests",
-    "counterValue": "{{total}} total · {{success}} ok · {{failed}} failed · {{active}} active",
-    "port": "Port",
-    "portHint": "Changing the port takes effect after the proxy restarts.",
-    "portSaved": "Port saved; if running, the proxy restarts and takeover addresses are rewritten.",
-    "lastError": "Last error",
-    "stoppedHint": "The proxy is not running. Taken-over targets cannot send requests until you start it.",
-    "takeoverHint": "Takeover rewrites client configuration",
-    "takeoverHintDetail": "When enabled, the target's Base URL points at this local proxy; disabling writes the site's real address back. Quitting the app restores direct connections.",
-    "takeoverEnabled": "{{target}} takeover enabled",
-    "takeoverDisabled": "{{target}} takeover disabled",
-    "takeoverNeedsRunning": "Start the proxy before enabling takeover.",
-    "boundSite": "Bound site: {{site}}",
-    "noBoundSite": "No site bound",
-    "disableAll": "Restore all direct",
-    "disableAllTitle": "Restore every target to a direct connection?",
-    "disableAllBody": "All taken-over targets will be written back to their site's real address and stop using the local proxy.",
-    "disableAllOk": "Restore direct",
-    "refresh": "Refresh",
-    "clear": "Clear",
-    "logPrivacy": "The log records method, path, status and duration only — never headers, bodies, keys, or the path token.",
-    "noRequests": "No requests yet",
-    "colTime": "Time",
-    "colTarget": "Target",
-    "colMethod": "Method",
-    "colPath": "Path",
-    "colStatus": "Status",
-    "colDuration": "Duration",
-    "colError": "Error",
-    "targetClaudeCode": "Claude Code",
-    "targetCodex": "Codex",
-    "targetPi": "Pi",
-    "targetPrime": "Prime",
-    "stopRestored": "Proxy stopped and taken-over targets were restored to direct connections."
   }
 }
