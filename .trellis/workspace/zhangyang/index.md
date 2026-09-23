@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
-- **Last Active**: 2026-09-22
+- **Total Sessions**: 25
+- **Last Active**: 2026-09-23
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~675 | Active |
+| `journal-1.md` | ~697 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-09-23 | MCP 按 Agent 管理改版 + 漂移对账 + 扫描反馈优化 | `980253e` | `feat/mcp-per-agent-manage` |
 | 24 | 2026-09-22 | MCP 纳管即接管 | `7f06f2c` | `feat/mcp-adopt-takeover` |
 | 23 | 2026-09-22 | 删除悬浮窗功能 | `04a9936` | `feat/site-add-presets` |
 | 22 | 2026-09-21 | 站点列表额度空白兜底 | `d855d6f` | `feat/site-add-presets` |
