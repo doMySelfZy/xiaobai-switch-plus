@@ -1787,9 +1787,26 @@ export async function handleBrowserCommand<T>(
       return result as T;
     }
     case "list_mcp_servers":
-      return mcpServers.map(({ config: _config, env: _env, headers: _headers, ...summary }) => ({
-        ...summary,
+      return mcpServers.map(({ config, env: _env, headers: _headers, ...summary }) => {
+        const command = (config as Record<string, unknown> | undefined)?.command;
+        const absoluteCommand =
+          summary.kind === "stdio" &&
+          typeof command === "string" &&
+          /^(\/|\\\\|[A-Za-z]:[\\/])/.test(command.trim());
+        return { ...summary, absoluteCommand };
+      }) as T;
+    case "mcp_drift_status": {
+      // 浏览器 mock 无真实客户端文件，回「无漂移」占位（不含 Prime）。
+      const targets: TargetKind[] = ["claude_code", "codex", "pi"];
+      return targets.map((target) => ({
+        target,
+        toWrite: 0,
+        toClean: 0,
+        conflicts: [] as string[],
+        drift: false,
+        error: null,
       })) as T;
+    }
     case "get_mcp_server": {
       const id = String(args?.id ?? "");
       const server = mcpServers.find((item) => item.id === id);

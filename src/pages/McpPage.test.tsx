@@ -8,6 +8,7 @@ import {
   setBrowserMcpTakeoverFailTargets,
 } from "@/lib/browserMock";
 import { useMcpStore } from "@/stores/mcpStore";
+import { useUIStore } from "@/stores/uiStore";
 import { McpPage } from "./McpPage";
 import "@/i18n";
 
@@ -20,7 +21,9 @@ function Wrapper({ children }: { children: ReactNode }) {
 }
 
 function resetMcpStore() {
-  useMcpStore.setState({ servers: [], loading: false });
+  useMcpStore.setState({ servers: [], loading: false, drift: [] });
+  // per-agent 外壳默认停在 Claude Code。
+  useUIStore.setState({ mcpTab: "claude_code" });
 }
 
 /** antd 会在两个汉字之间插入空格，这里统一用容忍空白的匹配。 */
@@ -31,6 +34,11 @@ function saveButton(): HTMLElement {
 /** 顶栏「添加 MCP 服务」按钮：打开新建弹窗。 */
 function addButton(): HTMLElement {
   return screen.getByRole("button", { name: /添加 MCP 服务/ });
+}
+
+/** 点击左侧 agent 侧栏切换当前目标。 */
+function switchTab(name: RegExp) {
+  fireEvent.click(screen.getByRole("menuitem", { name }));
 }
 
 /** 打开新建弹窗并停在默认的「手动填写」页。 */
@@ -97,12 +105,12 @@ describe("McpPage", () => {
 
     expect(await screen.findByText("还没有 MCP 服务")).toBeInTheDocument();
     expect(screen.getByText(/环境变量与 Headers 在本应用内加密保存/)).toBeInTheDocument();
-    // 单列表布局退役了应用面板：路径只在须知卡里出现一次。
+    // 路径须知列出各客户端目标（信息性，仍含 Prime 路径）。
     expect(screen.getByText("/Users/demo/.claude.json")).toBeInTheDocument();
     expect(screen.getByText("/Users/demo/.prime/agent/settings.json")).toBeInTheDocument();
   });
 
-  it("lists saved servers as unified cards", async () => {
+  it("lists a saved server under its agent tab with a single per-agent toggle", async () => {
     await seedServer({ targets: ["claude_code", "prime"] });
 
     render(
@@ -113,8 +121,26 @@ describe("McpPage", () => {
 
     expect(await screen.findByText("demo")).toBeInTheDocument();
     const card = managedCard("demo");
-    // 四客户端开关行：逐目标一个开关（Claude/Codex/Pi/Prime）。
-    expect(within(card).getAllByRole("switch").length).toBeGreaterThanOrEqual(4);
+    // per-agent 卡：只有「主启用」+「应用到本 agent」两个开关。
+    expect(within(card).getAllByRole("switch")).toHaveLength(2);
+    expect(within(card).getByRole("switch", { name: /应用到 Claude Code/ })).toBeChecked();
+    expect(within(card).queryByRole("switch", { name: /应用到 Codex/ })).toBeNull();
+  });
+
+  it("hides a server under agents it is not applied to", async () => {
+    await seedServer({ targets: ["claude_code"] });
+
+    render(
+      <Wrapper>
+        <McpPage />
+      </Wrapper>,
+    );
+
+    await screen.findByText("demo");
+    switchTab(/Codex/);
+    await waitFor(() => {
+      expect(screen.queryByText("demo")).toBeNull();
+    });
   });
 
   it("rejects a server name with characters that would break config keys", async () => {
@@ -154,7 +180,7 @@ describe("McpPage", () => {
 
   it("round-trips an edited server back into the simple form", async () => {
     const saved = (await seedServer({
-      targets: ["codex"],
+      targets: ["claude_code"],
       config: { command: "npx", args: ["-y", "pkg"], cwd: "/tmp/work" },
       env: { TOKEN: "placeholder-value" },
     })) as { server: { id: string } };
@@ -199,8 +225,8 @@ describe("McpPage", () => {
     expect(screen.queryByLabelText("启动命令")).toBeNull();
   });
 
-  describe("per-client toggles", () => {
-    it("reflects applied clients as on and uncovered clients as off", async () => {
+  describe("per-agent toggles", () => {
+    it("reflects an applied server's toggle as on", async () => {
       await seedServer({ targets: ["claude_code"] });
 
       render(
@@ -210,14 +236,13 @@ describe("McpPage", () => {
       );
 
       await screen.findByText("demo");
-      const card = managedCard("demo");
-      const claude = within(card).getByRole("switch", { name: /应用到 Claude Code/ });
-      const codex = within(card).getByRole("switch", { name: /应用到 Codex/ });
+      const claude = within(managedCard("demo")).getByRole("switch", {
+        name: /应用到 Claude Code/,
+      });
       expect(claude).toBeChecked();
-      expect(codex).not.toBeChecked();
     });
 
-    it("adds a target when a client toggle is switched on", async () => {
+    it("adds a target through the edit form's target checkboxes", async () => {
       await seedServer({ targets: ["claude_code"] });
 
       render(
@@ -227,15 +252,17 @@ describe("McpPage", () => {
       );
 
       await screen.findByText("demo");
-      const codex = within(managedCard("demo")).getByRole("switch", { name: /应用到 Codex/ });
-      fireEvent.click(codex);
+      fireEvent.click(within(managedCard("demo")).getByRole("button", { name: /编\s*辑/ }));
+      await screen.findByLabelText("服务名称");
+      fireEvent.click(screen.getByRole("checkbox", { name: "Codex" }));
+      fireEvent.click(saveButton());
 
       await waitFor(() => {
         expect(useMcpStore.getState().servers[0].targets).toContain("codex");
       });
     });
 
-    it("removes a target when a client toggle is switched off", async () => {
+    it("removes a target when the client toggle is switched off", async () => {
       await seedServer({ targets: ["claude_code", "codex"] });
 
       render(
@@ -245,7 +272,9 @@ describe("McpPage", () => {
       );
 
       await screen.findByText("demo");
-      const claude = within(managedCard("demo")).getByRole("switch", { name: /应用到 Claude Code/ });
+      const claude = within(managedCard("demo")).getByRole("switch", {
+        name: /应用到 Claude Code/,
+      });
       fireEvent.click(claude);
 
       await waitFor(() => {
@@ -273,9 +302,9 @@ describe("McpPage", () => {
       });
     });
 
-    it("filters servers by name", async () => {
+    it("filters servers by name within the agent", async () => {
       await seedServer({ name: "alpha", targets: ["claude_code"] });
-      await seedServer({ name: "beta", targets: ["codex"] });
+      await seedServer({ name: "beta", targets: ["claude_code"] });
 
       render(
         <Wrapper>
@@ -410,12 +439,8 @@ describe("McpPage", () => {
       await waitFor(() => {
         expect(useMcpStore.getState().servers).toHaveLength(1);
       });
-      expect(useMcpStore.getState().servers[0].targets).toEqual([
-        "claude_code",
-        "codex",
-        "pi",
-        "prime",
-      ]);
+      // per-agent 外壳排除 Prime：默认目标只含 Claude / Codex / Pi。
+      expect(useMcpStore.getState().servers[0].targets).toEqual(["claude_code", "codex", "pi"]);
     });
 
     it("blocks saving until registry-declared required fields are filled", async () => {
@@ -467,16 +492,18 @@ describe("McpPage", () => {
   });
 
   describe("unmanaged (wild) entries", () => {
-    it("lists hand-configured servers from other clients on open", async () => {
+    it("lists an agent's hand-configured servers under its tab", async () => {
       render(
         <Wrapper>
           <McpPage />
         </Wrapper>,
       );
 
-      // 挂载即扫描：野生条目直接内联在下方区块，无需切页签。
+      // Claude tab: existing-db 是 claude_code 上的野生条目。
+      expect(await screen.findByText("existing-db")).toBeInTheDocument();
+      // existing-fs 属于 Codex，切过去才出现。
+      switchTab(/Codex/);
       expect(await screen.findByText("existing-fs")).toBeInTheDocument();
-      expect(screen.getByText("existing-db")).toBeInTheDocument();
     });
 
     it("shows which keys an entry needs without exposing values", async () => {
@@ -486,6 +513,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      // existing-db（claude_code）声明需要 DB_URL，只显示键名不显示值。
       expect(await screen.findByText(/需要 DB_URL/)).toBeInTheDocument();
       expect(screen.queryByText(/DB_URL=/)).toBeNull();
     });
@@ -497,11 +525,12 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
-      // 托管条目不算野生：不出现纳管卡片。
+      // 托管条目（managed-one）不算野生：不出现纳管卡片。
       expect(screen.queryByText("managed-one")).toBeNull();
-      // 两条可纳管：各自一个纳管按钮（批量按钮单列）。
-      expect(screen.getAllByRole("button", { name: /^纳\s*管$/ })).toHaveLength(2);
+      // Codex 页只有 existing-fs 一条可纳管：一个纳管按钮。
+      expect(screen.getAllByRole("button", { name: /^纳\s*管$/ })).toHaveLength(1);
     });
 
     it("adopts a single wild entry into the managed list", async () => {
@@ -511,6 +540,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
       const card = unmanagedCard("existing-fs");
       fireEvent.click(within(card).getByRole("button", { name: /^纳\s*管$/ }));
@@ -522,22 +552,23 @@ describe("McpPage", () => {
     });
 
     it("removes the entry from the wild list after adoption (takeover round-trip)", async () => {
-      // 纳管即接管：入库并写盘后重扫，该条目不再是「未纳管」野生条目。
       render(
         <Wrapper>
           <McpPage />
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
       const card = unmanagedCard("existing-fs");
       fireEvent.click(within(card).getByRole("button", { name: /^纳\s*管$/ }));
 
-      // 纳管后重扫：existing-fs 从野生列表消失（不再有对应的未纳管卡片）。
+      // 纳管后重扫：existing-fs 不再作为「未纳管」野生条目出现。
       await waitFor(() => {
-        expect(
-          screen.queryByText("existing-fs")?.closest('[data-testid="mcp-unmanaged-card"]') ?? null,
-        ).toBeNull();
+        const stillWild = screen
+          .queryAllByText("existing-fs")
+          .some((el) => el.closest('[data-testid="mcp-unmanaged-card"]'));
+        expect(stillWild).toBe(false);
       });
     });
 
@@ -550,6 +581,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
       const card = unmanagedCard("existing-fs");
       fireEvent.click(within(card).getByRole("button", { name: /^纳\s*管$/ }));
@@ -557,22 +589,23 @@ describe("McpPage", () => {
       expect(await screen.findByText(/接管失败/)).toBeInTheDocument();
     });
 
-    it("adopts all remaining wild entries at once", async () => {
+    it("adopts all wild entries of the current agent at once", async () => {
       render(
         <Wrapper>
           <McpPage />
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
       fireEvent.click(screen.getByRole("button", { name: /全部纳管/ }));
 
       const dialog = await screen.findByRole("dialog");
-      expect(within(dialog).getByText("existing-db")).toBeInTheDocument();
+      expect(within(dialog).getByText("existing-fs")).toBeInTheDocument();
       fireEvent.click(within(dialog).getByRole("button", { name: /确\s*认/ }));
 
       await waitFor(() => {
-        expect(useMcpStore.getState().servers).toHaveLength(2);
+        expect(useMcpStore.getState().servers).toHaveLength(1);
       });
     });
   });
@@ -592,6 +625,7 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
       const card = managedCard("existing-fs");
       // 冲突横幅出现，附「对比」按钮。
@@ -618,15 +652,17 @@ describe("McpPage", () => {
         </Wrapper>,
       );
 
+      switchTab(/Codex/);
       await screen.findByText("existing-fs");
-      fireEvent.click(await within(managedCard("existing-fs")).findByRole("button", { name: /对\s*比/ }));
+      fireEvent.click(
+        await within(managedCard("existing-fs")).findByRole("button", { name: /对\s*比/ }),
+      );
       fireEvent.click(await screen.findByRole("button", { name: /该客户端先跳过/ }));
 
       // 跳过只关弹窗：库内那条记录原样保留。
       await waitFor(() => {
         expect(screen.queryByText(/解决同名冲突/)).toBeNull();
       });
-      // 跳过不入库、不改库：那条库内记录仍在，且仍绑 codex。
       const record = useMcpStore.getState().servers.find((s) => s.name === "existing-fs");
       expect(record).toBeDefined();
       expect(record?.targets).toContain("codex");

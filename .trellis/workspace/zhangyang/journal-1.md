@@ -673,3 +673,25 @@ MCP页面去页签改单列表，逐客户端四开关即时应用/移除，挂�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 25: MCP 按 Agent 管理改版 + 漂移对账 + 扫描反馈优化
+<!-- trellis-session: v=2 fp=680ebbdd96eaa9fa -->
+
+**Date**: 2026-09-23
+**Task**: MCP 按 Agent 管理改版 + 漂移对账 + 扫描反馈优化
+**Branch**: `feat/mcp-per-agent-manage`
+
+### Summary
+
+实现 MCP 按 Agent 侧栏管理，实时漂移检测与重新应用，绝对路径预警，重新扫描交互反馈。修复 targets=[] 边缘场景。版本 0.1.8 已打包安装验证。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `980253e` | feat(mcp): 按 Agent 各自管理 + 漂移对账 + 重新扫描反馈 |
+
+### Status
+
+[OK] **Completed**

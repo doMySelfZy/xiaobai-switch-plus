@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "store 封装 invoke、写后回读、drift 刷新时机、browserMock 同步契约"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "侧栏壳/Modal/图标/aria-label/keep-alive 面板照抄 ApplySidebar 的规范"}
+{"file": ".trellis/spec/frontend/type-safety.md", "reason": "McpAgentTab/McpTargetDrift 联合类型穷尽映射、可选字段 serde default、前后端字段逐字对齐"}
+{"file": ".trellis/spec/backend/index.md", "reason": "兼容红线：xiaobai_ 命名空间、FINGERPRINT_TABLES 不动、ensure_incremental_schema、增量 clippy 口径"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "plan_json_merge 抽取复用（apply 与 drift 干跑共用），避免重复实现 merge/clean 口径"}
+{"file": "AGENTS.md", "reason": "MCP 统一管控与扫描纳管硬约束、每客户端只写原生位置、扫描不回密钥值"}

@@ -29,7 +29,9 @@ import {
 import { useTranslation } from "react-i18next";
 import { invoke } from "@/lib/invoke";
 import { useMcpStore } from "@/stores";
+import { useUIStore } from "@/stores/uiStore";
 import { useMcpUpdateStore } from "@/stores/mcpUpdateStore";
+import { McpSidebar, MCP_AGENT_TABS } from "@/components/mcp/McpSidebar";
 import type {
   McpImportLocator,
   McpKind,
@@ -182,14 +184,20 @@ export function McpPage() {
   // 按字段订阅：任一 store 更新不再整页重渲染。
   const servers = useMcpStore((s) => s.servers);
   const loading = useMcpStore((s) => s.loading);
+  const drift = useMcpStore((s) => s.drift);
   const loadServers = useMcpStore((s) => s.loadServers);
+  const loadDrift = useMcpStore((s) => s.loadDrift);
   const getServer = useMcpStore((s) => s.getServer);
   const saveServer = useMcpStore((s) => s.saveServer);
   const deleteServer = useMcpStore((s) => s.deleteServer);
+  const applyServers = useMcpStore((s) => s.applyServers);
   const searchRegistry = useMcpStore((s) => s.searchRegistry);
   const discoverRegistry = useMcpStore((s) => s.discoverRegistry);
   const scanExisting = useMcpStore((s) => s.scanExisting);
   const importScanned = useMcpStore((s) => s.importScanned);
+
+  // per-agent 外壳：当前选中的 agent（不含 Prime）。
+  const mcpTab = useUIStore((s) => s.mcpTab);
 
   const updateStatuses = useMcpUpdateStore((s) => s.updateStatuses);
   const checking = useMcpUpdateStore((s) => s.checking);
@@ -207,9 +215,13 @@ export function McpPage() {
   const [mineSearch, setMineSearch] = useState("");
   // 「其它客户端已有的 MCP」扫描结果。null = 还没扫描过。
   const [scanOutcome, setScanOutcome] = useState<ScanOutcome | null>(null);
+  // 重新检测进行中：驱动按钮 spinner，手动触发时还给一条完成提示。
+  const [scanning, setScanning] = useState(false);
   const [importing, setImporting] = useState(false);
   // 某条 MCP 的某个客户端开关正在写盘（防连点，逐卡独立 spinner）。
   const [busyToggle, setBusyToggle] = useState<{ id: string; target: TargetKind } | null>(null);
+  // 「需重新应用」横幅的一键重写盘正在进行。
+  const [reapplying, setReapplying] = useState(false);
   const [form] = Form.useForm<FormValues>();
   const kind = Form.useWatch("kind", form);
 
@@ -219,7 +231,7 @@ export function McpPage() {
   const [requiredErrors, setRequiredErrors] = useState<Record<string, boolean>>({});
   // 免密钥条目在没有任何已有目标时，弹窗问一次装到哪儿（不先入库不应用）。
   const [targetPicker, setTargetPicker] = useState<RegistryCandidate | null>(null);
-  const [pickerTargets, setPickerTargets] = useState<TargetKind[]>([...TARGETS]);
+  const [pickerTargets, setPickerTargets] = useState<TargetKind[]>([...MCP_AGENT_TABS]);
 
   // 同名冲突解决弹窗
   const [conflict, setConflict] = useState<ConflictContext | null>(null);
@@ -293,13 +305,22 @@ export function McpPage() {
     }
   }, [discoverRegistry, message]);
 
-  const runScan = useCallback(async () => {
-    try {
-      setScanOutcome(await scanExisting());
-    } catch (error) {
-      void message.error(errorText(error));
-    }
-  }, [scanExisting, message]);
+  const runScan = useCallback(
+    async (options?: { notify?: boolean }) => {
+      setScanning(true);
+      try {
+        setScanOutcome(await scanExisting());
+        if (options?.notify) void message.success(t("mcp.rescanDone"));
+      } catch (error) {
+        void message.error(errorText(error));
+      } finally {
+        setScanning(false);
+      }
+      // 扫描后接管关系/漂移都可能变，顺手刷新漂移标记。
+      void loadDrift();
+    },
+    [scanExisting, message, t, loadDrift],
+  );
 
   useEffect(() => {
     void loadServers();
@@ -393,7 +414,7 @@ export function McpPage() {
   const preferredTargets = (): TargetKind[] => {
     const targets = new Set<TargetKind>();
     servers.forEach((server) => server.targets.forEach((target) => targets.add(target)));
-    return TARGETS.filter((target) => targets.has(target));
+    return MCP_AGENT_TABS.filter((target) => targets.has(target));
   };
 
   /** 把表单值 + 仓库必填项组装成待保存的输入。 */
@@ -492,7 +513,7 @@ export function McpPage() {
 
     const targets = preferredTargets();
     if (targets.length === 0) {
-      setPickerTargets([...TARGETS]);
+      setPickerTargets([...MCP_AGENT_TABS]);
       setTargetPicker(candidate);
       return;
     }
@@ -671,22 +692,23 @@ export function McpPage() {
           );
         }
         setScanOutcome(await scanExisting());
+        void loadDrift();
       } catch (error) {
         void message.error(errorText(error));
       } finally {
         setImporting(false);
       }
     },
-    [importScanned, scanExisting, message, t, targetLabel],
+    [importScanned, scanExisting, message, t, targetLabel, loadDrift],
   );
 
   const confirmImportAll = () => {
     modal.confirm({
       centered: true,
-      title: t("mcp.existingImportConfirmTitle", { count: importable.length }),
+      title: t("mcp.existingImportConfirmTitle", { count: importableForTab.length }),
       content: (
         <div className="flex flex-col gap-1">
-          {importable.map((entry) => (
+          {importableForTab.map((entry) => (
             <div key={`${entry.target}:${entry.key}`} style={{ fontSize: 13 }}>
               {entry.name}
               <Typography.Text type="secondary" style={{ fontSize: 12, marginLeft: 6 }}>
@@ -702,7 +724,9 @@ export function McpPage() {
       okText: t("common.confirm"),
       cancelText: t("common.cancel"),
       onOk: () => {
-        void importEntries(importable.map((entry) => ({ target: entry.target, key: entry.key })));
+        void importEntries(
+          importableForTab.map((entry) => ({ target: entry.target, key: entry.key })),
+        );
       },
     });
   };
@@ -779,11 +803,31 @@ export function McpPage() {
         });
         void message.success(t("common.success"));
         showApplyOutcome(sweep);
+        void loadDrift();
       } catch (error) {
         void message.error(errorText(error));
       }
     },
-    [getServer, saveServer, message, showApplyOutcome, t],
+    [getServer, saveServer, message, showApplyOutcome, t, loadDrift],
+  );
+
+  /** 「需重新应用」横幅：把 DB 期望态一次性重写盘到该客户端（含清理孤儿）。 */
+  const handleReapply = useCallback(
+    async (target: TargetKind) => {
+      setReapplying(true);
+      try {
+        const result = await applyServers([target]);
+        const failed = result.results.filter((item) => !item.ok);
+        if (failed.length === 0) void message.success(t("mcp.reapplySuccess"));
+        else showApplyOutcome(result);
+        void runScan();
+      } catch (error) {
+        void message.error(errorText(error));
+      } finally {
+        setReapplying(false);
+      }
+    },
+    [applyServers, message, t, showApplyOutcome, runScan],
   );
 
   /** 逐客户端开关：改 targets → save，后端 sweep 负责写盘/清理。 */
@@ -868,12 +912,28 @@ export function McpPage() {
     setConflictLoc(null);
   };
 
-  // 我的 MCP 过滤：名称子串（大小写不敏感）。
+  // per-agent 视图：只列归属当前 agent 的 MCP（含该目标上的同名冲突），再按名称过滤。
   const visibleServers = useMemo(() => {
     const query = mineSearch.trim().toLowerCase();
-    if (!query) return servers;
-    return servers.filter((server) => server.name.toLowerCase().includes(query));
-  }, [servers, mineSearch]);
+    return servers.filter((server) => {
+      const belongs =
+        server.targets.includes(mcpTab) || conflictSet.has(`${server.name}::${mcpTab}`);
+      if (!belongs) return false;
+      if (query && !server.name.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [servers, mineSearch, mcpTab, conflictSet]);
+
+  // 当前 agent 的漂移状态 / 可纳管条目 / 扫描告警。
+  const tabDrift = useMemo(() => drift.find((item) => item.target === mcpTab), [drift, mcpTab]);
+  const importableForTab = useMemo(
+    () => importable.filter((entry) => entry.target === mcpTab),
+    [importable, mcpTab],
+  );
+  const tabWarnings = useMemo(
+    () => (scanOutcome?.warnings ?? []).filter((warning) => warning.target === mcpTab),
+    [scanOutcome, mcpTab],
+  );
 
   const editing = editingId !== null;
   const modalTitle = editing
@@ -883,50 +943,102 @@ export function McpPage() {
       : t("mcp.add");
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-auto p-6">
-      <div>
-        <Typography.Title level={4} style={{ margin: 0 }}>
-          {t("mcp.title")}
-          {hasAnyUpdate() && (
-            <Tag color="orange" style={{ marginLeft: 8, fontSize: 12 }}>
-              {t("mcp.updatesAvailable", { count: updateCount() })}
-            </Tag>
-          )}
-        </Typography.Title>
-        <Typography.Text type="secondary">{t("mcp.emptyDesc")}</Typography.Text>
+    <div className="flex h-full min-h-0">
+      <div
+        className="h-full w-56 shrink-0"
+        style={{ borderRight: "1px solid var(--border-color)", backgroundColor: token.colorBgContainer }}
+      >
+        <McpSidebar />
       </div>
+      <div
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-auto p-6"
+        style={{ backgroundColor: token.colorBgElevated }}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <Typography.Title level={4} style={{ margin: 0 }}>
+            {targetLabel(mcpTab)}
+            {hasAnyUpdate() && (
+              <Tag color="orange" style={{ marginLeft: 8, fontSize: 12 }}>
+                {t("mcp.updatesAvailable", { count: updateCount() })}
+              </Tag>
+            )}
+          </Typography.Title>
+          <span style={{ flex: 1 }} />
+          <Tooltip title={t("mcp.existingRescan")}>
+            <Button
+              icon={<ReloadOutlined spin={scanning} />}
+              loading={scanning}
+              onClick={() => void runScan({ notify: true })}
+            >
+              {t("mcp.existingRescan")}
+            </Button>
+          </Tooltip>
+          <Tooltip title={t("mcp.checkUpdates")}>
+            <Button
+              icon={<ReloadOutlined spin={checking} />}
+              loading={checking}
+              onClick={() => void handleCheckUpdates()}
+            >
+              {t("mcp.checkUpdates")}
+            </Button>
+          </Tooltip>
+          {hasAnyUpdate() && (
+            <Button icon={<SyncOutlined />} onClick={() => void handleUpdateAll()}>
+              {t("mcp.updateAll")} ({updateCount()})
+            </Button>
+          )}
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            {t("mcp.add")}
+          </Button>
+        </div>
 
-      {/* 精简工具条：搜索 + 检查更新 + 一键更新 + 添加 MCP */}
-      <div className="flex flex-wrap items-center gap-2">
         <Input
           value={mineSearch}
           onChange={(event) => setMineSearch(event.target.value)}
           placeholder={t("mcp.mineSearchPlaceholder")}
           allowClear
           prefix={<SearchOutlined style={{ color: token.colorTextTertiary }} />}
-          style={{ width: 240 }}
+          style={{ maxWidth: 280 }}
         />
-        <span style={{ flex: 1 }} />
-        <Tooltip title={t("mcp.checkUpdates")}>
-          <Button
-            icon={<ReloadOutlined spin={checking} />}
-            loading={checking}
-            onClick={() => void handleCheckUpdates()}
-          >
-            {t("mcp.checkUpdates")}
-          </Button>
-        </Tooltip>
-        {hasAnyUpdate() && (
-          <Button icon={<SyncOutlined />} onClick={() => void handleUpdateAll()}>
-            {t("mcp.updateAll")} ({updateCount()})
-          </Button>
-        )}
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          {t("mcp.add")}
-        </Button>
-      </div>
 
-      {/* 托管 MCP 单列表 */}
+        {/* 需重新应用：DB 期望态 ≠ 客户端实际态时的一键重写盘横幅（R3）。 */}
+        {tabDrift?.drift && (
+          <Alert
+            type="warning"
+            showIcon
+            message={t("mcp.driftBannerTitle")}
+            description={
+              <div className="flex flex-col gap-1" style={{ fontSize: 12 }}>
+                <span>
+                  {t("mcp.driftBannerDetail", {
+                    write: tabDrift.toWrite,
+                    clean: tabDrift.toClean,
+                  })}
+                </span>
+                {tabDrift.conflicts.length > 0 && (
+                  <span>
+                    {t("mcp.driftBannerConflicts", { names: tabDrift.conflicts.join("、") })}
+                  </span>
+                )}
+                {tabDrift.error && (
+                  <span style={{ color: token.colorError }}>{tabDrift.error}</span>
+                )}
+              </div>
+            }
+            action={
+              <Button
+                size="small"
+                type="primary"
+                loading={reapplying}
+                onClick={() => void handleReapply(mcpTab)}
+              >
+                {t("mcp.reapply")}
+              </Button>
+            }
+          />
+        )}
+
+      {/* 当前 agent 的托管 MCP 列表（逐目标单开关） */}
       {loading && servers.length === 0 ? (
         <Card loading />
       ) : visibleServers.length === 0 ? (
@@ -939,10 +1051,11 @@ export function McpPage() {
             <McpCard
               key={server.id}
               server={server}
-              clientStates={clientStatesOf(server)}
+              target={mcpTab}
+              state={clientStatesOf(server)[mcpTab]}
               updateStatus={updateStatuses.find((item) => item.id === server.id)}
               updating={updating[server.id] || false}
-              busyTarget={busyToggle?.id === server.id ? busyToggle.target : null}
+              busy={busyToggle?.id === server.id && busyToggle.target === mcpTab}
               targetLabel={targetLabel}
               onToggleClient={(record, target, next) => void handleToggleClient(record, target, next)}
               onResolveConflict={(record, target) => void openConflict(record, target)}
@@ -956,9 +1069,9 @@ export function McpPage() {
       )}
 
       {/* 扫描到的「野生」MCP：一进来自动列出，一键纳管收编。 */}
-      {(scanOutcome?.warnings.length ?? 0) > 0 && (
+      {tabWarnings.length > 0 && (
         <div className="flex flex-col gap-1">
-          {scanOutcome?.warnings.map((warning) => (
+          {tabWarnings.map((warning) => (
             <Typography.Text
               key={`${warning.target}:${warning.message}`}
               type="warning"
@@ -973,11 +1086,11 @@ export function McpPage() {
         </div>
       )}
 
-      {importable.length > 0 && (
+      {importableForTab.length > 0 && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <Typography.Text strong style={{ fontSize: 13 }}>
-              {t("mcp.unmanagedSectionTitle", { count: importable.length })}
+              {t("mcp.unmanagedSectionTitle", { count: importableForTab.length })}
             </Typography.Text>
             <span style={{ flex: 1 }} />
             <Button
@@ -986,13 +1099,13 @@ export function McpPage() {
               loading={importing}
               onClick={confirmImportAll}
             >
-              {t("mcp.existingImportAll", { count: importable.length })}
+              {t("mcp.existingImportAll", { count: importableForTab.length })}
             </Button>
           </div>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             {t("mcp.unmanagedSectionDesc")}
           </Typography.Text>
-          {importable.map((entry) => (
+          {importableForTab.map((entry) => (
             <UnmanagedMcpCard
               key={`${entry.target}:${entry.key}`}
               entry={entry}
@@ -1027,6 +1140,7 @@ export function McpPage() {
           </details>
         </div>
       </Card>
+      </div>
 
       {/* 免密钥仓库条目：没有已有目标时问一次装到哪儿 */}
       <Modal
@@ -1054,7 +1168,7 @@ export function McpPage() {
           <Checkbox.Group
             value={pickerTargets}
             onChange={(values) => setPickerTargets(values as TargetKind[])}
-            options={TARGETS.map((target) => ({ label: targetLabel(target), value: target }))}
+            options={MCP_AGENT_TABS.map((target) => ({ label: targetLabel(target), value: target }))}
           />
         </div>
       </Modal>
@@ -1292,7 +1406,7 @@ export function McpPage() {
 
             <Form.Item name="targets" label={t("mcp.targets")}>
               <Checkbox.Group
-                options={TARGETS.map((target) => ({ label: targetLabel(target), value: target }))}
+                options={MCP_AGENT_TABS.map((target) => ({ label: targetLabel(target), value: target }))}
               />
             </Form.Item>
 

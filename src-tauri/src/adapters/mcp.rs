@@ -1,11 +1,12 @@
 use crate::adapters::atomic::{atomic_write, backup_file, FileLock};
-use crate::domain::{McpKind, McpServer};
+use crate::domain::{McpKind, McpServer, TargetKind};
 use crate::error::{AppError, AppResult};
 use crate::paths::{
     claude_mcp_json_path, resolve_codex_home, resolve_pi_agent_dir, resolve_prime_agent_dir,
     set_secret_permissions,
 };
 use serde_json::{Map, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -413,6 +414,204 @@ pub fn apply_to_prime(
         backup_paths,
         message: format!("Applied {} MCP servers to Prime", servers.len()),
     })
+}
+
+/// 某个目标「库内期望」与「客户端现状」的差异，用于驱动「需重新应用」提示。
+/// 只读计算，不写盘、不备份、不加锁。
+#[derive(Debug, Clone, Default)]
+pub struct McpMergePlan {
+    /// 需要写入或内容有变化的托管条目数。
+    pub to_write: usize,
+    /// 客户端里已失效、应用时会被清理的托管条目（孤儿）数。
+    pub to_clean: usize,
+    /// 存在同名未托管条目且内容与库内记录不一致、会导致应用报错跳过的服务名。
+    pub conflicts: Vec<String>,
+}
+
+impl McpMergePlan {
+    pub fn drift(&self) -> bool {
+        self.to_write > 0 || self.to_clean > 0 || !self.conflicts.is_empty()
+    }
+}
+
+/// 库内针对某目标、启用中的托管条目的期望内容（key = `xiaobai_<name>`）。
+fn desired_entries(
+    servers: &[McpServer],
+    target: TargetKind,
+    entry_of: impl Fn(&McpServer) -> String,
+) -> BTreeMap<String, String> {
+    servers
+        .iter()
+        .filter(|server| server.enabled && server.targets.contains(&target))
+        .map(|server| (managed_key(&server.name), entry_of(server)))
+        .collect()
+}
+
+/// 由「期望条目」「客户端现有托管条目」「冲突名单」算出差异计数。
+fn plan_from(
+    desired: &BTreeMap<String, String>,
+    actual_managed: &BTreeMap<String, String>,
+    conflicts: Vec<String>,
+) -> McpMergePlan {
+    let to_write = desired
+        .iter()
+        .filter(|(key, value)| actual_managed.get(*key).map(|v| v != *value).unwrap_or(true))
+        .count();
+    let to_clean = actual_managed
+        .keys()
+        .filter(|key| !desired.contains_key(*key))
+        .count();
+    McpMergePlan {
+        to_write,
+        to_clean,
+        conflicts,
+    }
+}
+
+fn canonical(value: &Value) -> String {
+    crate::adapters::mcp_scan::canonical(value)
+}
+
+/// 读取一个 JSON 客户端配置（只读）：不存在回 `None`，形状非法回错误。
+fn read_json_readonly(path: &Path, label: &str) -> AppResult<Option<Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(path)?;
+    let root: Value = serde_json::from_str(&text)
+        .map_err(|error| AppError::new("invalid_config", format!("invalid {label}: {error}")))?;
+    Ok(Some(root))
+}
+
+/// JSON 目标（Claude / Pi / Prime）的漂移计划。
+fn plan_json_target(
+    path: &Path,
+    label: &str,
+    servers: &[McpServer],
+    target: TargetKind,
+) -> AppResult<McpMergePlan> {
+    let root = read_json_readonly(path, label)?;
+    let servers_map = root
+        .as_ref()
+        .and_then(|root| root.get("mcpServers"))
+        .and_then(|value| value.as_object());
+    if let Some(value) = root.as_ref().and_then(|root| root.get("mcpServers")) {
+        if !value.is_object() {
+            return Err(AppError::new(
+                "invalid_config",
+                format!("existing mcpServers must be a JSON object in {label}"),
+            ));
+        }
+    }
+
+    let mut actual_managed = BTreeMap::new();
+    let mut conflicts = Vec::new();
+    let desired = desired_entries(servers, target, |server| canonical(&server_entry(server)));
+
+    if let Some(map) = servers_map {
+        for (key, entry) in map {
+            if key.starts_with(MANAGED_PREFIX) {
+                actual_managed.insert(key.clone(), canonical(entry));
+            }
+        }
+        for server in servers
+            .iter()
+            .filter(|server| server.enabled && server.targets.contains(&target))
+        {
+            if map.contains_key(&managed_key(&server.name)) {
+                continue;
+            }
+            if let Some(existing) = map.get(&server.name) {
+                if !untracked_matches_record(existing, server) {
+                    conflicts.push(server.name.clone());
+                }
+            }
+        }
+    }
+
+    Ok(plan_from(&desired, &actual_managed, conflicts))
+}
+
+pub fn plan_claude(
+    servers: &[McpServer],
+    claude_home_override: Option<&str>,
+) -> AppResult<McpMergePlan> {
+    let path = claude_mcp_json_path(claude_home_override)?;
+    plan_json_target(&path, "~/.claude.json", servers, TargetKind::ClaudeCode)
+}
+
+pub fn plan_pi(servers: &[McpServer], pi_agent_dir_override: Option<&str>) -> AppResult<McpMergePlan> {
+    let path = resolve_pi_agent_dir(pi_agent_dir_override)?.join("mcp.json");
+    plan_json_target(&path, "Pi mcp.json", servers, TargetKind::Pi)
+}
+
+pub fn plan_codex(
+    servers: &[McpServer],
+    codex_home_override: Option<&str>,
+) -> AppResult<McpMergePlan> {
+    let path = resolve_codex_home(codex_home_override)?.join("config.toml");
+    let doc = if path.exists() {
+        let text = fs::read_to_string(&path)?;
+        Some(text.parse::<toml_edit::DocumentMut>().map_err(|error| {
+            AppError::new(
+                "invalid_config",
+                format!("invalid Codex config.toml: {error}"),
+            )
+        })?)
+    } else {
+        None
+    };
+
+    if let Some(doc) = &doc {
+        if let Some(item) = doc.get("mcp_servers") {
+            if !item.is_table() && !item.is_inline_table() {
+                return Err(AppError::new(
+                    "invalid_config",
+                    "Codex config.toml has a non-table 'mcp_servers' key",
+                ));
+            }
+        }
+    }
+
+    let desired = desired_entries(servers, TargetKind::Codex, |server| {
+        canonical(&crate::adapters::mcp_scan::codex_record_to_json(server))
+    });
+    let mut actual_managed = BTreeMap::new();
+    let mut conflicts = Vec::new();
+
+    if let Some(section) = doc
+        .as_ref()
+        .and_then(|doc| doc.get("mcp_servers"))
+        .and_then(|item| item.as_table_like())
+    {
+        for (key, item) in section.iter() {
+            if key.starts_with(MANAGED_PREFIX) {
+                if let Some(table) = item.as_table_like() {
+                    let json = crate::adapters::mcp_scan::codex_entry_to_json(table);
+                    actual_managed.insert(key.to_string(), canonical(&json));
+                }
+            }
+        }
+        for server in servers
+            .iter()
+            .filter(|server| server.enabled && server.targets.contains(&TargetKind::Codex))
+        {
+            if section.contains_key(&managed_key(&server.name)) {
+                continue;
+            }
+            let Some(existing) = section.get(&server.name).and_then(|item| item.as_table_like())
+            else {
+                continue;
+            };
+            let actual = crate::adapters::mcp_scan::codex_entry_to_json(existing);
+            let expected = crate::adapters::mcp_scan::codex_record_to_json(server);
+            if canonical(&actual) != canonical(&expected) {
+                conflicts.push(server.name.clone());
+            }
+        }
+    }
+
+    Ok(plan_from(&desired, &actual_managed, conflicts))
 }
 
 #[cfg(test)]
@@ -1170,5 +1369,138 @@ API_KEY = "placeholder"
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("xiaobai_demo"));
         assert!(text.contains("something-else"), "其它条目保留");
+    }
+
+    fn targeted(name: &str, targets: Vec<TargetKind>) -> McpServer {
+        let mut s = server(name, true);
+        s.targets = targets;
+        s
+    }
+
+    #[test]
+    fn plan_claude_clean_after_apply() {
+        let (dir, backup) = temp_backup_root();
+        let home = dir.path().to_str().unwrap();
+        let servers = vec![targeted("demo", vec![TargetKind::ClaudeCode])];
+        apply_to_claude(&servers, Some(home), &backup).unwrap();
+        let plan = plan_claude(&servers, Some(home)).unwrap();
+        assert!(!plan.drift(), "刚应用完不应有漂移: {plan:?}");
+        assert_eq!(plan.to_write, 0);
+        assert_eq!(plan.to_clean, 0);
+        assert!(plan.conflicts.is_empty());
+    }
+
+    #[test]
+    fn plan_claude_detects_pending_write() {
+        let (dir, _backup) = temp_backup_root();
+        let home = dir.path().to_str().unwrap();
+        // 文件不存在：目标里有启用条目 → 待写入 1。
+        let servers = vec![targeted("demo", vec![TargetKind::ClaudeCode])];
+        let plan = plan_claude(&servers, Some(home)).unwrap();
+        assert_eq!(plan.to_write, 1);
+        assert_eq!(plan.to_clean, 0);
+        assert!(plan.drift());
+    }
+
+    #[test]
+    fn plan_claude_detects_orphan() {
+        let (dir, _backup) = temp_backup_root();
+        let existing = json!({
+            "mcpServers": {"xiaobai_gone": {"command": "old", "type": "stdio"}}
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&existing).unwrap(),
+        )
+        .unwrap();
+        // 库里没有任何面向 Claude 的启用条目 → 该托管条目是孤儿，待清理 1。
+        let plan = plan_claude(&[], Some(dir.path().to_str().unwrap())).unwrap();
+        assert_eq!(plan.to_write, 0);
+        assert_eq!(plan.to_clean, 1);
+        assert!(plan.drift());
+    }
+
+    #[test]
+    fn plan_claude_flags_untracked_conflict() {
+        let (dir, _backup) = temp_backup_root();
+        let existing = json!({
+            "mcpServers": {"demo": {"command": "user-edited"}}
+        });
+        fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string(&existing).unwrap(),
+        )
+        .unwrap();
+        let servers = vec![targeted("demo", vec![TargetKind::ClaudeCode])];
+        let plan = plan_claude(&servers, Some(dir.path().to_str().unwrap())).unwrap();
+        assert_eq!(plan.conflicts, vec!["demo".to_string()]);
+        assert!(plan.drift());
+    }
+
+    #[test]
+    fn plan_claude_malformed_is_reported() {
+        let (dir, _backup) = temp_backup_root();
+        fs::write(
+            dir.path().join(".claude.json"),
+            r#"{"mcpServers":"not-an-object"}"#,
+        )
+        .unwrap();
+        let err = plan_claude(&[], Some(dir.path().to_str().unwrap())).unwrap_err();
+        assert!(err.to_string().contains("mcpServers"));
+    }
+
+    #[test]
+    fn plan_claude_ignores_disabled_and_other_targets() {
+        let (dir, _backup) = temp_backup_root();
+        let home = dir.path().to_str().unwrap();
+        let mut disabled = targeted("disabled", vec![TargetKind::ClaudeCode]);
+        disabled.enabled = false;
+        let servers = vec![disabled, targeted("codex-only", vec![TargetKind::Codex])];
+        let plan = plan_claude(&servers, Some(home)).unwrap();
+        assert!(!plan.drift(), "禁用与非本目标条目都不计入: {plan:?}");
+    }
+
+    #[test]
+    fn plan_pi_clean_after_apply() {
+        let (dir, backup) = temp_backup_root();
+        let pi_dir = dir.path().join("pi");
+        let servers = vec![targeted("demo", vec![TargetKind::Pi])];
+        apply_to_pi(&servers, Some(pi_dir.to_str().unwrap()), &backup).unwrap();
+        let plan = plan_pi(&servers, Some(pi_dir.to_str().unwrap())).unwrap();
+        assert!(!plan.drift(), "{plan:?}");
+    }
+
+    #[test]
+    fn plan_codex_clean_after_apply() {
+        let (dir, backup) = temp_backup_root();
+        let home = dir.path().to_str().unwrap();
+        let servers = vec![targeted("demo", vec![TargetKind::Codex])];
+        apply_to_codex(&servers, Some(home), &backup).unwrap();
+        let plan = plan_codex(&servers, Some(home)).unwrap();
+        assert!(!plan.drift(), "Codex 刚应用完不应有漂移: {plan:?}");
+    }
+
+    #[test]
+    fn plan_codex_detects_orphan_and_pending() {
+        let (dir, _backup) = temp_backup_root();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            "[mcp_servers.xiaobai_gone]\ncommand = \"old\"\ntype = \"stdio\"\n",
+        )
+        .unwrap();
+        let servers = vec![targeted("demo", vec![TargetKind::Codex])];
+        let plan = plan_codex(&servers, Some(dir.path().to_str().unwrap())).unwrap();
+        assert_eq!(plan.to_write, 1, "demo 待写入");
+        assert_eq!(plan.to_clean, 1, "xiaobai_gone 是孤儿");
+        assert!(plan.drift());
+    }
+
+    #[test]
+    fn plan_codex_rejects_non_table_mcp_servers() {
+        let (dir, _backup) = temp_backup_root();
+        fs::write(dir.path().join("config.toml"), "mcp_servers = 1\n").unwrap();
+        let err = plan_codex(&[], Some(dir.path().to_str().unwrap())).unwrap_err();
+        assert!(err.to_string().contains("mcp_servers"));
     }
 }

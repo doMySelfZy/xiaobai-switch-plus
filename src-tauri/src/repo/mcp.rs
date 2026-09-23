@@ -75,6 +75,8 @@ pub fn list(conn: &Connection, crypto: &Crypto) -> AppResult<Vec<McpServerSummar
     let mut servers = Vec::new();
     while let Some(row) = rows.next()? {
         let server = read_row(row, crypto)?;
+        let absolute_command =
+            crate::adapters::mcp_identity::command_is_absolute(server.kind, &server.config);
         servers.push(McpServerSummary {
             id: server.id,
             name: server.name,
@@ -86,6 +88,7 @@ pub fn list(conn: &Connection, crypto: &Crypto) -> AppResult<Vec<McpServerSummar
             current_version: server.current_version,
             latest_version: server.latest_version,
             last_update_check_at: server.last_update_check_at,
+            absolute_command,
         });
     }
     Ok(servers)

@@ -13,6 +13,8 @@ export interface McpServerSummary {
   currentVersion?: string | null;
   latestVersion?: string | null;
   lastUpdateCheckAt?: number | null;
+  /** 派生字段：stdio 命令首段是绝对路径，跨机可能失效。 */
+  absoluteCommand?: boolean;
 }
 
 export interface McpServer {
@@ -52,6 +54,21 @@ export interface McpApplyTargetResult {
 export interface McpApplyResult {
   results: McpApplyTargetResult[];
   appliedAt: number;
+}
+
+/** 某个目标客户端的漂移计划：DB 期望态与客户端实际写入态的差异。 */
+export interface McpTargetDrift {
+  target: TargetKind;
+  /** 待写入（新增或内容不一致）的托管条目数。 */
+  toWrite: number;
+  /** 待清理的孤儿托管条目数。 */
+  toClean: number;
+  /** 存在未托管同名条目且与库记录不等价、接管会跳过的服务器名。 */
+  conflicts: string[];
+  /** 是否存在任何漂移。 */
+  drift: boolean;
+  /** 读取该客户端配置失败时的错误信息（形状非法等）。 */
+  error?: string | null;
 }
 
 export interface McpSaveResult {
