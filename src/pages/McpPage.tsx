@@ -930,6 +930,18 @@ export function McpPage() {
     () => importable.filter((entry) => entry.target === mcpTab),
     [importable, mcpTab],
   );
+
+  // 库里存在但没分到任何 Agent 的托管记录（targets 为空）。多来自跨机同步的历史行：
+  // 不属于任何标签页，若不单列就彻底不可见、只能改库。这里在每个 Agent 页都列出，
+  // 可就地分配给当前 Agent（打开开关）或删除，杜绝手改数据库。
+  const unassignedServers = useMemo(() => {
+    const query = mineSearch.trim().toLowerCase();
+    return servers.filter((server) => {
+      if (server.targets.length > 0) return false;
+      if (query && !server.name.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  }, [servers, mineSearch]);
   const tabWarnings = useMemo(
     () => (scanOutcome?.warnings ?? []).filter((warning) => warning.target === mcpTab),
     [scanOutcome, mcpTab],
@@ -1112,6 +1124,36 @@ export function McpPage() {
               importing={importing}
               targetLabel={targetLabel}
               onImport={(item) => void importEntries([{ target: item.target, key: item.key }])}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 未分配到任何 Agent 的托管记录：打开开关分配给当前 Agent，或删除。 */}
+      {unassignedServers.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <Typography.Text strong style={{ fontSize: 13 }}>
+            {t("mcp.unassignedSectionTitle", { count: unassignedServers.length })}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {t("mcp.unassignedSectionDesc", { agent: targetLabel(mcpTab) })}
+          </Typography.Text>
+          {unassignedServers.map((server) => (
+            <McpCard
+              key={server.id}
+              server={server}
+              target={mcpTab}
+              state="off"
+              updateStatus={updateStatuses.find((item) => item.id === server.id)}
+              updating={updating[server.id] || false}
+              busy={busyToggle?.id === server.id && busyToggle.target === mcpTab}
+              targetLabel={targetLabel}
+              onToggleClient={(record, target, next) => void handleToggleClient(record, target, next)}
+              onResolveConflict={(record, target) => void openConflict(record, target)}
+              onToggleEnabled={(record, enabled) => void handleToggleEnabled(record, enabled)}
+              onEdit={(id) => void openEdit(id)}
+              onDelete={handleDelete}
+              onUpdate={(id) => void handleUpdate(id)}
             />
           ))}
         </div>

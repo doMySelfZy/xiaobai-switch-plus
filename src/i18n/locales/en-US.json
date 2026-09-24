@@ -817,6 +817,8 @@
     "conflictSkip": "Skip this client",
     "unmanagedSectionTitle": "Found in clients · not managed ({{count}})",
     "unmanagedSectionDesc": "MCPs you configured directly in a client. Adopt them into the unified list to manage them here.",
+    "unassignedSectionTitle": "Not assigned to any agent ({{count}})",
+    "unassignedSectionDesc": "These MCPs exist in this app but aren't assigned to any agent (usually leftovers synced from another machine). Turn on the switch to assign one to {{agent}}, or delete it.",
     "unmanagedIn": "Not managed · in {{target}}",
     "adopt": "Adopt",
     "unmanagedHint": "Adopting reads the config (secret values stay in the backend) and brings it into the unified list.",

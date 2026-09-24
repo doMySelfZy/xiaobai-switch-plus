@@ -817,6 +817,8 @@
     "conflictSkip": "该客户端先跳过",
     "unmanagedSectionTitle": "客户端里发现·未纳管（{{count}}）",
     "unmanagedSectionDesc": "你直接在某个客户端里配的 MCP。纳管后收编进统一清单，在这里一起管理。",
+    "unassignedSectionTitle": "未分配到任何 Agent（{{count}}）",
+    "unassignedSectionDesc": "这些 MCP 存在于本应用，但没有分配给任何 Agent（常见于跨机同步带来的历史记录）。打开开关即分配给 {{agent}}，或直接删除。",
     "unmanagedIn": "未纳管·在 {{target}}",
     "adopt": "纳管",
     "unmanagedHint": "纳管会读取其配置（密钥值留在后端）并收编进统一清单。",
